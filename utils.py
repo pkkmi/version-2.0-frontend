@@ -1,10 +1,23 @@
 import random
 import re
+import os
+import requests
+import logging
 from config import pricing_plans
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("andikar-frontend")
+
+# Humanizer API URL from environment variable or default
+HUMANIZER_API_URL = os.environ.get("HUMANIZER_API_URL", "https://web-production-3db6c.up.railway.app")
 
 # Helper function to humanize text
 def humanize_text(text, user_type):
-    # Simple humanization algorithm
+    # Check word limit
     word_count = len(text.split())
     user_limit = pricing_plans[user_type]["word_limit"]
 
@@ -16,6 +29,33 @@ def humanize_text(text, user_type):
     else:
         message = f"Used {word_count} of {user_limit} available words"
 
+    try:
+        # Call the actual Humanizer API
+        logger.info(f"Calling humanizer API at {HUMANIZER_API_URL}/humanize_text with {len(text)} characters")
+        response = requests.post(
+            f"{HUMANIZER_API_URL}/humanize_text",
+            json={"input_text": text},
+            timeout=30  # 30 second timeout
+        )
+        
+        # Check if the request was successful
+        if response.status_code == 200:
+            result = response.json()
+            logger.info(f"Humanizer API returned {len(result.get('result', ''))} characters")
+            return result.get("result", text), message
+        else:
+            logger.error(f"Humanizer API returned status code {response.status_code}: {response.text}")
+            # Fall back to simple humanization if API call fails
+            return _simple_humanize(text), f"{message} (using fallback mode)"
+            
+    except Exception as e:
+        logger.error(f"Error calling humanizer API: {str(e)}")
+        # Fall back to simple humanization
+        return _simple_humanize(text), f"{message} (using fallback mode)"
+
+# Simple fallback humanization function
+def _simple_humanize(text):
+    """Simple humanization as fallback when API is unavailable"""
     # Simple humanization rules
     humanized = text
 
@@ -53,7 +93,7 @@ def humanize_text(text, user_type):
     humanized = humanized.replace("Furthermore", "Plus")
     humanized = humanized.replace("However", "But")
 
-    return humanized, message
+    return humanized
 
 
 # AI detector function
@@ -65,7 +105,7 @@ def detect_ai_content(text):
     ai_indicators = [
         "furthermore,", "additionally,", "moreover,", "thus,", "therefore,",
         "consequently,", "hence,", "as a result,", "in conclusion,",
-        "to summarize,", "in summary,"
+        "to summarize,", "in summary,",
     ]
 
     # Count indicators
