@@ -55,9 +55,9 @@ def register():
         password = request.form['password']
         plan_type = request.form['plan_type']
         
-        # Additional fields - we'll add these for our backend registration
-        email = f"{username}@example.com"  # In a real app, you'd collect this from the form
-        phone = None  # In a real app, you might collect phone number
+        # Get email and phone from the form
+        email = request.form['email']
+        phone = request.form.get('phone', None)  # Phone is optional
 
         if username in users_db:
             flash('Username already exists', 'error')
@@ -229,7 +229,8 @@ def payment():
         
         # When a payment is completed, update user profile in backend
         try:
-            email = f"{session['user_id']}@example.com"  # This would be the real email in a production app
+            # Use a default email format if we don't have their email
+            email = f"{session['user_id']}@example.com"  # This is just a fallback
             register_user_to_backend(
                 username=session['user_id'],
                 email=email,
