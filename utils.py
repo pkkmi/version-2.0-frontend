@@ -7,7 +7,7 @@ from datetime import datetime
 
 # API URLs
 HUMANIZER_API_URL = os.environ.get("HUMANIZER_API_URL", "https://web-production-3db6c.up.railway.app")
-ADMIN_API_URL = os.environ.get("ADMIN_API_URL", "https://railway-test-api-production.up.railway.app") 
+ADMIN_API_URL = os.environ.get("ADMIN_API_URL", "https://railway-test-api.up.railway.app") 
 AI_DETECTOR_API_URL = os.environ.get("AI_DETECTOR_API_URL", "https://ai-detector-api.example.com")
 
 
@@ -179,12 +179,16 @@ def register_user_to_backend(username, email, phone=None, plan_type=None):
             }
         }
         
+        print(f"Attempting to register user to backend at: {ADMIN_API_URL}/api/register")
+        
         # Send the data to the backend API
         response = requests.post(
             f"{ADMIN_API_URL}/api/register", 
             json=registration_data,
             timeout=10
         )
+        
+        print(f"Backend registration response status: {response.status_code}")
         
         if response.status_code == 201:
             return True, "Registration successful!"
