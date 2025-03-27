@@ -1,9 +1,10 @@
-from flask import Flask, render_template_string, request, redirect, url_for, session, flash
+from flask import Flask, render_template_string, request, redirect, url_for, session, flash, jsonify
 import random
 import string
 import datetime
 import re
 import os
+import requests
 from functools import wraps
 
 from config import APP_NAME, pricing_plans
@@ -234,6 +235,71 @@ def logout():
     return redirect(url_for('index'))
 
 
+# Diagnostic endpoint for the API connection
+@app.route('/api-test')
+def api_test():
+    """Diagnostic endpoint to check the humanizer API connection"""
+    api_url = os.environ.get("HUMANIZER_API_URL", "https://web-production-3db6c.up.railway.app")
+    sample_text = "This is a test of the Andikar humanizer API connection."
+    results = {
+        "api_url": api_url,
+        "tests": []
+    }
+    
+    # Test 1: Check the root endpoint
+    try:
+        response = requests.get(f"{api_url}/", timeout=5)
+        results["tests"].append({
+            "name": "Root endpoint",
+            "success": response.status_code == 200,
+            "status": response.status_code,
+            "content_type": response.headers.get('content-type', 'Unknown')
+        })
+    except Exception as e:
+        results["tests"].append({
+            "name": "Root endpoint",
+            "success": False,
+            "error": str(e)
+        })
+        
+    # Test 2: Check the echo endpoint
+    try:
+        response = requests.post(f"{api_url}/echo_text", json={"input_text": sample_text}, timeout=5)
+        results["tests"].append({
+            "name": "Echo endpoint",
+            "success": response.status_code == 200,
+            "status": response.status_code,
+            "response": response.json() if response.status_code == 200 else response.text[:100]
+        })
+    except Exception as e:
+        results["tests"].append({
+            "name": "Echo endpoint",
+            "success": False,
+            "error": str(e)
+        })
+        
+    # Test 3: Check the humanize endpoint
+    try:
+        response = requests.post(f"{api_url}/humanize_text", json={"input_text": sample_text}, timeout=15)
+        results["tests"].append({
+            "name": "Humanize endpoint",
+            "success": response.status_code == 200,
+            "status": response.status_code,
+            "response": response.json() if response.status_code == 200 else response.text[:100]
+        })
+    except Exception as e:
+        results["tests"].append({
+            "name": "Humanize endpoint",
+            "success": False,
+            "error": str(e)
+        })
+    
+    # Overall status
+    results["overall_success"] = all(test.get("success", False) for test in results["tests"])
+    
+    return jsonify(results)
+
+
 # CSS styles
 @app.route('/static/style.css')
 def serve_css():
@@ -282,5 +348,6 @@ if __name__ == '__main__':
     print("\nDemo account:")
     print("  Username: demo")
     print("  Password: demo")
+    print(f"\nHumanizer API URL: {os.environ.get('HUMANIZER_API_URL', 'https://web-production-3db6c.up.railway.app')}")
     
     app.run(host='0.0.0.0', port=port)
