@@ -1,92 +1,92 @@
 # Andikar AI Frontend
 
-A Flask-based web application for humanizing AI-generated text and detecting AI content.
+A Flask frontend application for humanizing AI-generated text using the Andikar AI ecosystem.
 
-## Features
+## Setup Instructions
 
-- **Content Humanizer**: Transform AI-generated text into natural human-like writing
-- **AI Detector**: Check if your content will be flagged as AI-generated
-- **User Management**: Register, login, and manage user accounts
-- **Subscription Plans**: Free, Basic, and Premium tiers with different word limits
-- **Responsive Design**: Works on desktop and mobile devices
+### Prerequisites
+- Python 3.8 or higher
+- [Andikar Humanizer API](https://github.com/granitevolition/text-humanizer-api) running at https://web-production-3db6c.up.railway.app/ or another endpoint
 
-## Tech Stack
+### Installation
 
-- **Flask**: Web framework for the application
-- **Jinja2**: Template engine
-- **CSS**: Custom styling with glassmorphism design
-- **JavaScript**: Client-side interactivity
-- **Font Awesome**: For icons and visual elements
+1. Clone the repository:
+   ```
+   git clone https://github.com/granitevolition/andikar-frontend.git
+   cd andikar-frontend
+   ```
 
-## Deployment on Railway
+2. Create a virtual environment:
+   ```
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
 
-This application is configured for easy deployment on Railway.com. When you deploy to Railway, it will:
+3. Install dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
 
-1. Automatically detect the Python application
-2. Install the dependencies from requirements.txt
-3. Start the application using the Procfile configuration
-4. Assign a public URL to your application
+4. Configure environment variables:
+   ```
+   cp .env.example .env
+   ```
+   Edit `.env` file to set the appropriate values, especially:
+   - `HUMANIZER_API_URL` - URL to your running Humanizer API service
 
-### Deployment Steps
+## Running the Application
 
-1. Fork or clone this repository to your GitHub account
-2. Go to [Railway.app](https://railway.app/) and sign in
-3. Click "New Project" and select "Deploy from GitHub repo"
-4. Select this repository from the list
-5. Railway will automatically detect and deploy the application
-6. Once deployed, you can access your application at the URL provided by Railway
-
-## Local Development
-
-To run this application locally:
-
-```bash
-# Clone the repository
-git clone https://github.com/granitevolition/andikar-frontend.git
-cd andikar-frontend
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run the application
+Start the Flask development server:
+```
 python app.py
 ```
 
-The application will be available at http://localhost:5000
+The application will be available at http://localhost:5000/
 
-## Environment Variables
+### Testing the Humanizer API Connection
 
-You can customize the application behavior with these environment variables:
+If you're having problems with the Humanizer API connection, use the diagnostic tool:
 
-- `SECRET_KEY`: For session security (generated randomly by default)
-- `PORT`: Port to run the application (defaults to 5000)
+```
+python test_api.py
+```
 
-## Demo Account
+This script will test the connection to the Humanizer API and provide detailed information about any issues.
 
-For testing purposes, a demo account is automatically created:
+## Troubleshooting
 
-- Username: `demo`
-- Password: `demo`
-- Plan: Basic (1,500 words limit)
+### Humanizer API Connection Issues
+
+If the humanizing functionality is not working:
+
+1. Check that the Humanizer API is running at the URL specified in your `.env` file
+2. Run `python test_api.py` to diagnose connection issues
+3. Verify that the endpoint is correct (should be `/humanize_text`)
+4. Check for any network/firewall issues that might block the connection
+5. Inspect the logs for detailed error information
+
+The application includes a fallback humanization function if the API is temporarily unavailable.
+
+## Features
+
+- User authentication and registration
+- Text humanization using external API
+- AI content detection
+- User dashboard with usage statistics
+- Tiered pricing plans with word limits
+- M-Pesa payment integration (simulated)
+- API key management for integration
 
 ## Project Structure
 
-```
-andikar-frontend/
-├── app.py               # Main Flask application
-├── config.py            # Configuration settings
-├── models.py            # Data models
-├── utils.py             # Utility functions
-├── templates.py         # HTML templates
-├── static/              # Static assets
-│   ├── style.css        # CSS styles
-│   └── script.js        # JavaScript code
-├── requirements.txt     # Dependencies
-├── Procfile             # For Railway deployment
-├── runtime.txt          # Python version specification
-└── README.md            # Documentation
-```
+- `app.py` - Main Flask application
+- `utils.py` - Utility functions including API integration
+- `models.py` - Data models and in-memory databases
+- `templates/` - HTML templates (embedded in templates.py)
+- `static/` - CSS and JavaScript files
+- `config.py` - Application configuration
+- `test_api.py` - Diagnostic tool for API connection
 
-## License
+## Deployment
 
-MIT
+The application is designed to be deployed on Railway.app or similar platform. See the Railway documentation for deployment instructions.
