@@ -45,55 +45,13 @@ def humanize_text(text, user_type):
             return result.get("result", text), message
         else:
             logger.error(f"Humanizer API returned status code {response.status_code}: {response.text}")
-            # Fall back to simple humanization if API call fails
-            return _simple_humanize(text), f"{message} (using fallback mode)"
+            # Return error message
+            return "", "Sorry, the humanization service is currently unavailable. Please try again later."
             
     except Exception as e:
         logger.error(f"Error calling humanizer API: {str(e)}")
-        # Fall back to simple humanization
-        return _simple_humanize(text), f"{message} (using fallback mode)"
-
-# Simple fallback humanization function
-def _simple_humanize(text):
-    """Simple humanization as fallback when API is unavailable"""
-    # Simple humanization rules
-    humanized = text
-
-    # Add some contractions
-    humanized = humanized.replace("I am", "I'm")
-    humanized = humanized.replace("do not", "don't")
-    humanized = humanized.replace("cannot", "can't")
-    humanized = humanized.replace("will not", "won't")
-
-    # Add some filler words at random positions
-    filler_words = ["actually", "basically", "honestly", "like", "you know", "I mean", "well", "sort of", "kind of"]
-    sentences = re.split(r'(?<=[.!?])\s+', humanized)
-
-    for i in range(len(sentences)):
-        if random.random() < 0.3:  # 30% chance to add a filler word
-            filler = random.choice(filler_words)
-            words = sentences[i].split()
-            if len(words) > 3:
-                insert_pos = random.randint(1, len(words) - 1)
-                words.insert(insert_pos, filler)
-                sentences[i] = " ".join(words)
-
-    humanized = " ".join(sentences)
-
-    # Occasionally change punctuation
-    if random.random() < 0.2:
-        humanized = humanized.replace(".", "...")
-
-    # Sometimes make a simple grammatical "mistake"
-    if random.random() < 0.15:
-        humanized = humanized.replace(" is ", " are ")
-
-    # Add some variability in sentence structure
-    humanized = humanized.replace("Additionally", "Also")
-    humanized = humanized.replace("Furthermore", "Plus")
-    humanized = humanized.replace("However", "But")
-
-    return humanized
+        # Return error message
+        return "", "Sorry, we couldn't connect to the humanization service. Please try again later."
 
 
 # AI detector function
