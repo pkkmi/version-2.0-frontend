@@ -9,7 +9,7 @@ from functools import wraps
 
 from config import APP_NAME, pricing_plans
 from models import users_db, transactions_db
-from utils import humanize_text, detect_ai_content
+from utils import humanize_text, detect_ai_content, register_user_to_backend
 from templates import html_templates
 
 app = Flask(__name__)
@@ -54,6 +54,10 @@ def register():
         username = request.form['username']
         password = request.form['password']
         plan_type = request.form['plan_type']
+        
+        # Additional fields - we'll add these for our backend registration
+        email = f"{username}@example.com"  # In a real app, you'd collect this from the form
+        phone = None  # In a real app, you might collect phone number
 
         if username in users_db:
             flash('Username already exists', 'error')
@@ -61,6 +65,7 @@ def register():
             # Set payment status (Free tier is automatically Paid)
             payment_status = 'Paid' if plan_type == 'Free' else 'Pending'
 
+            # Save user to in-memory database
             users_db[username] = {
                 'password': password,
                 'plan': plan_type,
@@ -72,8 +77,23 @@ def register():
                     'originality': ''
                 }
             }
-            flash('Registration successful! Please login.', 'success')
-            return redirect(url_for('login'))
+            
+            # Register the user to the backend API
+            success, message = register_user_to_backend(
+                username=username,
+                email=email,
+                phone=phone,
+                plan_type=plan_type
+            )
+            
+            if success:
+                flash('Registration successful! Please login.', 'success')
+                return redirect(url_for('login'))
+            else:
+                # If backend registration fails, we'll still allow the user to proceed
+                # but inform them of the issue
+                flash(f'Local registration successful, but backend sync encountered an issue: {message}', 'warning')
+                return redirect(url_for('login'))
 
     return render_template_string(html_templates['register.html'], pricing_plans=pricing_plans)
 
@@ -206,6 +226,19 @@ def payment():
 
         users_db[session['user_id']]['payment_status'] = 'Paid'
         flash(f'Payment of KES {amount} successful! Transaction ID: {transaction_id}', 'success')
+        
+        # When a payment is completed, update user profile in backend
+        try:
+            email = f"{session['user_id']}@example.com"  # This would be the real email in a production app
+            register_user_to_backend(
+                username=session['user_id'],
+                email=email,
+                phone=phone_number,
+                plan_type=users_db[session['user_id']]['plan']
+            )
+        except Exception as e:
+            print(f"Error updating user profile in backend: {e}")
+            
         return redirect(url_for('account'))
 
     return render_template_string(html_templates['payment.html'],
@@ -293,6 +326,24 @@ def api_test():
             "success": False,
             "error": str(e)
         })
+        
+    # Test 4: Check the admin API registration endpoint
+    admin_api_url = os.environ.get("ADMIN_API_URL", "https://railway-test-api-production.up.railway.app")
+    try:
+        # Just check if the endpoint is reachable, don't actually register
+        response = requests.get(f"{admin_api_url}/", timeout=5)
+        results["tests"].append({
+            "name": "Admin API root endpoint",
+            "success": response.status_code == 200,
+            "status": response.status_code,
+            "content_type": response.headers.get('content-type', 'Unknown')
+        })
+    except Exception as e:
+        results["tests"].append({
+            "name": "Admin API root endpoint",
+            "success": False,
+            "error": str(e)
+        })
     
     # Overall status
     results["overall_success"] = all(test.get("success", False) for test in results["tests"])
@@ -349,5 +400,7 @@ if __name__ == '__main__':
     print("  Username: demo")
     print("  Password: demo")
     print(f"\nHumanizer API URL: {os.environ.get('HUMANIZER_API_URL', 'https://web-production-3db6c.up.railway.app')}")
+    admin_api_url = os.environ.get("ADMIN_API_URL", "https://railway-test-api-production.up.railway.app")
+    print(f"Admin API URL: {admin_api_url}")
     
     app.run(host='0.0.0.0', port=port)
