@@ -1,14 +1,17 @@
 from flask_pymongo import PyMongo
-from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError, OperationFailure
+from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError, OperationFailure, AutoReconnect
+from pymongo import MongoClient
 from datetime import datetime
 import logging
 import time
 import threading
+import os
 
 # MongoDB connection
 mongo = PyMongo()
 mongo_connected = False
 mongo_retry_thread = None
+mongo_client = None
 
 # Fallback in-memory database (only used when MongoDB is unavailable)
 users_db = {}
@@ -16,41 +19,75 @@ transactions_db = []
 
 def retry_mongo_connection(app):
     """Background thread to retry MongoDB connection"""
-    global mongo_connected
+    global mongo_connected, mongo_client
+    
+    retry_delay = int(os.environ.get('MONGO_RETRY_DELAY', 10))
+    
     while not mongo_connected:
         try:
             app.logger.info("Attempting to reconnect to MongoDB...")
             
+            # Create a direct connection with timeout
+            mongo_uri = app.config.get('MONGO_URI')
+            timeout = int(os.environ.get('MONGO_TIMEOUT', 3))
+            
+            # Close previous client if it exists
+            if mongo_client:
+                try:
+                    mongo_client.close()
+                except:
+                    pass
+                    
+            # Create a new client with proper timeouts
+            mongo_client = MongoClient(
+                mongo_uri,
+                serverSelectionTimeoutMS=timeout * 1000,
+                connectTimeoutMS=timeout * 1000,
+                socketTimeoutMS=timeout * 2000
+            )
+            
             # Test connection
-            mongo.db.command('ping')
+            db = mongo_client.get_database()
+            db.command('ping')
+            
             mongo_connected = True
             app.logger.info("Successfully reconnected to MongoDB!")
             
             # Create indexes when connected
             try:
-                mongo.db.users.create_index("username", unique=True)
-                mongo.db.payments.create_index("checkout_id", unique=True)
-                mongo.db.transactions.create_index([("username", 1), ("timestamp", -1)])
+                db.users.create_index("username", unique=True)
+                db.payments.create_index("checkout_id", unique=True)
+                db.transactions.create_index([("username", 1), ("timestamp", -1)])
                 app.logger.info("MongoDB indexes created successfully")
             except Exception as e:
                 app.logger.error(f"Error creating MongoDB indexes: {e}")
                 
             # Sync in-memory data to MongoDB
             sync_memory_to_mongo(app)
+            
         except Exception as e:
             app.logger.warning(f"MongoDB reconnection failed: {str(e)}")
+            mongo_connected = False
             
         # Wait before trying again
-        time.sleep(10)
+        time.sleep(retry_delay)
 
 def sync_memory_to_mongo(app):
     """Sync in-memory database to MongoDB when connection is restored"""
+    global mongo_client
+    
+    if not mongo_client:
+        app.logger.error("Cannot sync to MongoDB: No client available")
+        return
+        
     try:
+        db = mongo_client.get_database()
+        
         # Sync users
         for username, user_data in users_db.items():
             try:
                 # Check if user exists in MongoDB
-                if mongo.db.users.count_documents({"username": username}) == 0:
+                if db.users.count_documents({"username": username}) == 0:
                     # Create user in MongoDB
                     mongo_user = {
                         "username": username,
@@ -62,11 +99,11 @@ def sync_memory_to_mongo(app):
                         "payment_status": user_data.get("payment_status", "Pending"),
                         "api_keys": user_data.get("api_keys", {})
                     }
-                    mongo.db.users.insert_one(mongo_user)
+                    db.users.insert_one(mongo_user)
                     app.logger.info(f"Synced user {username} to MongoDB")
                 else:
                     # Update user in MongoDB
-                    mongo.db.users.update_one(
+                    db.users.update_one(
                         {"username": username},
                         {"$set": {
                             "words_remaining": user_data.get("words_remaining", 0),
@@ -84,7 +121,7 @@ def sync_memory_to_mongo(app):
             try:
                 # Check if transaction exists in MongoDB
                 transaction_id = transaction.get('transaction_id')
-                if mongo.db.transactions.count_documents({"_id": transaction_id}) == 0:
+                if db.transactions.count_documents({"_id": transaction_id}) == 0:
                     # Create transaction in MongoDB
                     mongo_transaction = {
                         "_id": transaction_id,
@@ -96,11 +133,11 @@ def sync_memory_to_mongo(app):
                         "status": transaction.get('status'),
                         "reference": transaction.get('reference', 'N/A')
                     }
-                    mongo.db.transactions.insert_one(mongo_transaction)
+                    db.transactions.insert_one(mongo_transaction)
                     app.logger.info(f"Synced transaction {transaction_id} to MongoDB")
                     
                     # Also record as payment
-                    mongo.db.payments.insert_one({
+                    db.payments.insert_one({
                         "username": transaction.get('user_id'),
                         "amount": transaction.get('amount'),
                         "reference": transaction.get('reference', 'N/A'),
@@ -115,80 +152,85 @@ def sync_memory_to_mongo(app):
         app.logger.info("Memory-to-MongoDB sync completed")
     except Exception as e:
         app.logger.error(f"Error in sync_memory_to_mongo: {e}")
+        mongo_connected = False
 
 def init_mongo(app):
     """Initialize MongoDB connection with retry logic"""
-    global mongo_connected, mongo_retry_thread
+    global mongo_connected, mongo_retry_thread, mongo_client
     
     try:
-        # Fix the MongoDB URI to match Railway's format - Database is lipia
-        mongo_uri = app.config.get('MONGO_URI', '')
-        if mongo_uri:
-            # Make sure we have the database name
-            if not mongo_uri.endswith('/lipia') and not '?authSource=' in mongo_uri:
-                if '?' in mongo_uri:
-                    mongo_uri = mongo_uri.replace('?', '/lipia?')
-                else:
-                    mongo_uri = mongo_uri + '/lipia'
-                # Update the config
-                app.config['MONGO_URI'] = mongo_uri
-                app.logger.info(f"Updated MongoDB URI: {mongo_uri}")
+        # Get MongoDB URI from environment
+        mongo_uri = app.config.get('MONGO_URI')
+        if not mongo_uri:
+            mongo_uri = os.environ.get('MONGO_URI', 'mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@metro.proxy.rlwy.net:52335/lipia')
+            app.config['MONGO_URI'] = mongo_uri
+            
+        # Make sure we have the database name in the URI
+        dbname = os.environ.get('MONGO_DBNAME', 'lipia')
+        if not f'/{dbname}' in mongo_uri and '?' in mongo_uri:
+            mongo_uri = mongo_uri.replace('?', f'/{dbname}?')
+        elif not f'/{dbname}' in mongo_uri:
+            mongo_uri = f"{mongo_uri}/{dbname}"
+            
+        app.config['MONGO_URI'] = mongo_uri
+        app.logger.info(f"MongoDB URI: {mongo_uri}")
         
-        # Set shorter connection timeouts
+        # Set connection options
+        timeout = int(os.environ.get('MONGO_TIMEOUT', 3))
         app.config['MONGO_OPTIONS'] = {
-            'serverSelectionTimeoutMS': 5000,  # 5 seconds for server selection
-            'connectTimeoutMS': 5000,          # 5 seconds for connection
-            'socketTimeoutMS': 10000           # 10 seconds for socket operations
+            'serverSelectionTimeoutMS': timeout * 1000,  # 3 seconds for server selection
+            'connectTimeoutMS': timeout * 1000,          # 3 seconds for connection
+            'socketTimeoutMS': timeout * 2000            # 6 seconds for socket operations
         }
         
-        # Try direct connection instead of PyMongo to verify credentials
-        import pymongo
-        try:
-            client = pymongo.MongoClient(app.config['MONGO_URI'], 
-                                        serverSelectionTimeoutMS=5000,
-                                        connectTimeoutMS=5000)
-            # Force connection
-            client.admin.command('ping')
-            app.logger.info("MongoDB direct connection test successful!")
-            client.close()
-        except Exception as e:
-            app.logger.warning(f"MongoDB direct connection test failed: {e}")
-            raise
-        
-        # Initialize MongoDB connection
-        mongo.init_app(app)
-        app.logger.info("Testing MongoDB connection...")
-        
-        # Test connection
-        try:
-            mongo.db.command('ping')
-            mongo_connected = True
-            app.logger.info("MongoDB connected successfully!")
-            
-            # Create indexes
+        # Test direct connection if configured
+        if os.environ.get('MONGO_TEST_ON_STARTUP', 'true').lower() == 'true':
             try:
-                mongo.db.users.create_index("username", unique=True)
-                mongo.db.payments.create_index("checkout_id", unique=True)
-                mongo.db.transactions.create_index([("username", 1), ("timestamp", -1)])
+                # Create a direct connection with timeout
+                test_client = MongoClient(
+                    mongo_uri,
+                    serverSelectionTimeoutMS=timeout * 1000,
+                    connectTimeoutMS=timeout * 1000,
+                    socketTimeoutMS=timeout * 2000
+                )
+                
+                # Test connection with ping
+                test_client.admin.command('ping')
+                app.logger.info("MongoDB direct connection test successful!")
+                
+                # Keep this client for future use
+                mongo_client = test_client
+                mongo_connected = True
+                
+                # Create indexes
+                db = mongo_client.get_database()
+                db.users.create_index("username", unique=True)
+                db.payments.create_index("checkout_id", unique=True)
+                db.transactions.create_index([("username", 1), ("timestamp", -1)])
                 app.logger.info("MongoDB indexes created successfully")
+                
             except Exception as e:
-                app.logger.error(f"Error creating MongoDB indexes: {e}")
-        except Exception as e:
-            app.logger.error(f"MongoDB ping failed: {e}")
-            mongo_connected = False
+                app.logger.warning(f"MongoDB direct connection test failed: {e}")
+                mongo_connected = False
+                
+                # Only raise if fallback is not allowed
+                if os.environ.get('MONGO_FALLBACK_TO_MEMORY', 'true').lower() != 'true':
+                    raise
+        
+        # Initialize Flask-PyMongo
+        mongo.init_app(app)
             
-    except (ConnectionFailure, ServerSelectionTimeoutError, OperationFailure) as e:
-        app.logger.error(f"MongoDB connection failed: {e}")
-        app.logger.warning("Starting with in-memory database as fallback")
+    except Exception as e:
+        app.logger.error(f"MongoDB initialization error: {e}")
         mongo_connected = False
         
-    except Exception as e:
-        app.logger.error(f"Unexpected error initializing MongoDB: {e}")
-        app.logger.warning("Starting with in-memory database only")
-        mongo_connected = False
+        # Only raise if fallback is not allowed
+        if os.environ.get('MONGO_FALLBACK_TO_MEMORY', 'true').lower() != 'true':
+            raise
     
     # Start background thread to retry connection if not connected
-    if not mongo_connected:
+    if not mongo_connected and os.environ.get('MONGO_FALLBACK_TO_MEMORY', 'true').lower() == 'true':
+        app.logger.warning("Starting with in-memory database as fallback")
         app.logger.info("Will attempt to reconnect to MongoDB in background")
         
         if not mongo_retry_thread or not mongo_retry_thread.is_alive():
@@ -204,16 +246,18 @@ def init_mongo(app):
 # User models
 def get_user(username):
     """Get user by username"""
-    global mongo_connected
+    global mongo_connected, mongo_client
     
     # Try MongoDB first if connected
-    if mongo_connected:
+    if mongo_connected and mongo_client:
         try:
-            user = mongo.db.users.find_one({"username": username})
+            db = mongo_client.get_database()
+            user = db.users.find_one({"username": username})
             if user:
                 return user
         except Exception as e:
             logging.error(f"MongoDB error in get_user: {e}")
+            mongo_connected = False
     
     # Fallback to in-memory database
     if username in users_db:
@@ -230,11 +274,12 @@ def get_user(username):
 
 def create_user(username, pin, phone_number):
     """Create a new user"""
-    global mongo_connected
+    global mongo_connected, mongo_client
     
     # Create user in MongoDB if connected
-    if mongo_connected:
+    if mongo_connected and mongo_client:
         try:
+            db = mongo_client.get_database()
             mongo_user = {
                 "username": username,
                 "pin": pin,
@@ -248,9 +293,10 @@ def create_user(username, pin, phone_number):
                     "originality": ""
                 }
             }
-            mongo.db.users.insert_one(mongo_user)
+            db.users.insert_one(mongo_user)
         except Exception as e:
             logging.error(f"MongoDB error in create_user: {e}")
+            mongo_connected = False
     
     # Always create in in-memory database as fallback
     users_db[username] = {
@@ -270,17 +316,19 @@ def create_user(username, pin, phone_number):
 
 def update_user(username, update_data):
     """Update user info"""
-    global mongo_connected
+    global mongo_connected, mongo_client
     
     # Update in MongoDB if connected
-    if mongo_connected:
+    if mongo_connected and mongo_client:
         try:
-            mongo.db.users.update_one(
+            db = mongo_client.get_database()
+            db.users.update_one(
                 {"username": username},
                 {"$set": update_data}
             )
         except Exception as e:
             logging.error(f"MongoDB error in update_user: {e}")
+            mongo_connected = False
     
     # Always update in-memory database
     if username in users_db:
@@ -295,17 +343,18 @@ def update_user(username, update_data):
 
 def update_word_count(username, words_to_add):
     """Update user word count"""
-    global mongo_connected
+    global mongo_connected, mongo_client
     
     # Update in MongoDB if connected
-    if mongo_connected:
+    if mongo_connected and mongo_client:
         try:
-            mongo.db.users.update_one(
+            db = mongo_client.get_database()
+            db.users.update_one(
                 {"username": username},
                 {"$inc": {"words_remaining": words_to_add}}
             )
             # Get updated count from MongoDB
-            user = mongo.db.users.find_one({"username": username})
+            user = db.users.find_one({"username": username})
             if user:
                 # Also update in-memory database
                 if username in users_db:
@@ -313,6 +362,7 @@ def update_word_count(username, words_to_add):
                 return user.get("words_remaining", 0)
         except Exception as e:
             logging.error(f"MongoDB error in update_word_count: {e}")
+            mongo_connected = False
     
     # Fallback to in-memory database
     if username in users_db:
@@ -323,12 +373,13 @@ def update_word_count(username, words_to_add):
 
 def consume_words(username, words_to_use):
     """Consume words from user's account"""
-    global mongo_connected
+    global mongo_connected, mongo_client
     
     # Try MongoDB first if connected
-    if mongo_connected:
+    if mongo_connected and mongo_client:
         try:
-            user = mongo.db.users.find_one({"username": username})
+            db = mongo_client.get_database()
+            user = db.users.find_one({"username": username})
             if user:
                 current_words = user.get("words_remaining", 0)
                 
@@ -336,7 +387,7 @@ def consume_words(username, words_to_use):
                     return False, current_words
                 
                 # Update in MongoDB
-                mongo.db.users.update_one(
+                db.users.update_one(
                     {"username": username},
                     {"$inc": {"words_remaining": -words_to_use}}
                 )
@@ -348,6 +399,7 @@ def consume_words(username, words_to_use):
                 return True, current_words - words_to_use
         except Exception as e:
             logging.error(f"MongoDB error in consume_words: {e}")
+            mongo_connected = False
     
     # Fallback to in-memory database
     if username in users_db:
@@ -360,14 +412,16 @@ def consume_words(username, words_to_use):
 
 def user_exists(username):
     """Check if user exists"""
-    global mongo_connected
+    global mongo_connected, mongo_client
     
     # Try MongoDB first if connected
-    if mongo_connected:
+    if mongo_connected and mongo_client:
         try:
-            return mongo.db.users.count_documents({"username": username}) > 0
+            db = mongo_client.get_database()
+            return db.users.count_documents({"username": username}) > 0
         except Exception as e:
             logging.error(f"MongoDB error in user_exists: {e}")
+            mongo_connected = False
     
     # Fallback to in-memory database
     return username in users_db
@@ -375,7 +429,7 @@ def user_exists(username):
 # Payment models
 def record_payment(username, amount, subscription_type, status='pending', reference='N/A', checkout_id='N/A'):
     """Record a payment attempt"""
-    global mongo_connected
+    global mongo_connected, mongo_client
     
     payment = {
         "username": username,
@@ -388,11 +442,13 @@ def record_payment(username, amount, subscription_type, status='pending', refere
     }
     
     # Record in MongoDB if connected
-    if mongo_connected:
+    if mongo_connected and mongo_client:
         try:
-            mongo.db.payments.insert_one(payment)
+            db = mongo_client.get_database()
+            db.payments.insert_one(payment)
         except Exception as e:
             logging.error(f"MongoDB error in record_payment: {e}")
+            mongo_connected = False
     
     # Always record in in-memory database
     transactions_db.append({
@@ -409,16 +465,18 @@ def record_payment(username, amount, subscription_type, status='pending', refere
 
 def get_payment(checkout_id):
     """Get payment by checkout ID"""
-    global mongo_connected
+    global mongo_connected, mongo_client
     
     # Try MongoDB first if connected
-    if mongo_connected:
+    if mongo_connected and mongo_client:
         try:
-            payment = mongo.db.payments.find_one({"checkout_id": checkout_id})
+            db = mongo_client.get_database()
+            payment = db.payments.find_one({"checkout_id": checkout_id})
             if payment:
                 return payment
         except Exception as e:
             logging.error(f"MongoDB error in get_payment: {e}")
+            mongo_connected = False
     
     # Fallback to in-memory database
     for t in transactions_db:
@@ -436,21 +494,23 @@ def get_payment(checkout_id):
 
 def update_payment_status(checkout_id, status, reference=None):
     """Update payment status"""
-    global mongo_connected
+    global mongo_connected, mongo_client
     
     # Update in MongoDB if connected
-    if mongo_connected:
+    if mongo_connected and mongo_client:
         try:
+            db = mongo_client.get_database()
             update_data = {"status": status}
             if reference:
                 update_data["reference"] = reference
             
-            mongo.db.payments.update_one(
+            db.payments.update_one(
                 {"checkout_id": checkout_id},
                 {"$set": update_data}
             )
         except Exception as e:
             logging.error(f"MongoDB error in update_payment_status: {e}")
+            mongo_connected = False
     
     # Always update in-memory database
     for t in transactions_db:
@@ -463,16 +523,18 @@ def update_payment_status(checkout_id, status, reference=None):
 
 def get_user_payments(username):
     """Get all payments for a user"""
-    global mongo_connected
+    global mongo_connected, mongo_client
     
     # Try MongoDB first if connected
-    if mongo_connected:
+    if mongo_connected and mongo_client:
         try:
-            payments = list(mongo.db.payments.find({"username": username}).sort("timestamp", -1))
+            db = mongo_client.get_database()
+            payments = list(db.payments.find({"username": username}).sort("timestamp", -1))
             if payments:
                 return payments
         except Exception as e:
             logging.error(f"MongoDB error in get_user_payments: {e}")
+            mongo_connected = False
     
     # Fallback to in-memory database
     return [
@@ -491,16 +553,18 @@ def get_user_payments(username):
 # Transaction models
 def save_transaction(transaction_id, data):
     """Save transaction data"""
-    global mongo_connected
+    global mongo_connected, mongo_client
     
     # Save in MongoDB if connected
-    if mongo_connected:
+    if mongo_connected and mongo_client:
         try:
+            db = mongo_client.get_database()
             mongo_data = data.copy()
             mongo_data["_id"] = transaction_id
-            mongo.db.transactions.insert_one(mongo_data)
+            db.transactions.insert_one(mongo_data)
         except Exception as e:
             logging.error(f"MongoDB error in save_transaction: {e}")
+            mongo_connected = False
     
     # Always save in in-memory database
     transactions_db.append({
@@ -517,16 +581,18 @@ def save_transaction(transaction_id, data):
 
 def get_transaction(transaction_id):
     """Get transaction by ID"""
-    global mongo_connected
+    global mongo_connected, mongo_client
     
     # Try MongoDB first if connected
-    if mongo_connected:
+    if mongo_connected and mongo_client:
         try:
-            transaction = mongo.db.transactions.find_one({"_id": transaction_id})
+            db = mongo_client.get_database()
+            transaction = db.transactions.find_one({"_id": transaction_id})
             if transaction:
                 return transaction
         except Exception as e:
             logging.error(f"MongoDB error in get_transaction: {e}")
+            mongo_connected = False
     
     # Fallback to in-memory database
     for t in transactions_db:
@@ -545,21 +611,23 @@ def get_transaction(transaction_id):
 
 def update_transaction_status(transaction_id, status, reference=None):
     """Update transaction status"""
-    global mongo_connected
+    global mongo_connected, mongo_client
     
     # Update in MongoDB if connected
-    if mongo_connected:
+    if mongo_connected and mongo_client:
         try:
+            db = mongo_client.get_database()
             update_data = {"status": status}
             if reference:
                 update_data["reference"] = reference
             
-            mongo.db.transactions.update_one(
+            db.transactions.update_one(
                 {"_id": transaction_id},
                 {"$set": update_data}
             )
         except Exception as e:
             logging.error(f"MongoDB error in update_transaction_status: {e}")
+            mongo_connected = False
     
     # Always update in-memory database
     for t in transactions_db:
