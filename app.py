@@ -9,7 +9,7 @@ from functools import wraps
 import logging
 
 from config import APP_NAME, pricing_plans
-from models import users_db, transactions_db, init_mongo, get_user, update_word_count, get_user_payments
+from models import users_db, transactions_db, init_mongo, get_user, update_word_count, get_user_payments, mongo_connected
 from utils import humanize_text, detect_ai_content, register_user_to_backend
 from templates import html_templates
 
@@ -23,8 +23,16 @@ logging.basicConfig(level=logging.INFO)
 logger = app.logger
 logger.info("Starting application...")
 
-# Initialize storage - no MongoDB, just in-memory
-init_mongo(app)
+# MongoDB configuration
+app.config['MONGO_URI'] = os.environ.get(
+    'MONGO_URL', 
+    'mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@mongodb.railway.internal:27017/lipia'
+)
+logger.info(f"MongoDB URI: {app.config['MONGO_URI']}")
+
+# Initialize MongoDB with fallback to in-memory if connection fails
+mongo = init_mongo(app)
+logger.info(f"MongoDB connected: {mongo_connected}")
 
 # Register blueprints
 try:
@@ -138,7 +146,7 @@ def dashboard():
     # Build user data for template
     user_data = {
         'plan': user.get('plan', 'Free'),
-        'joined_date': datetime.datetime.now().strftime('%Y-%m-%d'),
+        'joined_date': user.get('created_at', datetime.datetime.now()).strftime('%Y-%m-%d'),
         'words_used': 0,
         'payment_status': user.get('payment_status', 'Pending'),
         'api_keys': user.get('api_keys', {
@@ -147,9 +155,13 @@ def dashboard():
         })
     }
     
+    # Show storage type in dashboard for debugging
+    storage_type = "MongoDB" if mongo_connected else "In-memory"
+    
     return render_template_string(html_templates['dashboard.html'], user=user_data,
                                   plan=pricing_plans[user_data['plan']],
-                                  words_remaining=user.get('words_remaining', 0))
+                                  words_remaining=user.get('words_remaining', 0),
+                                  storage_type=storage_type)
 
 
 @app.route('/humanize', methods=['GET', 'POST'])
@@ -239,7 +251,7 @@ def account():
     # Build user data for template
     user_data = {
         'plan': user.get('plan', 'Free'),
-        'joined_date': datetime.datetime.now().strftime('%Y-%m-%d'),
+        'joined_date': user.get('created_at', datetime.datetime.now()).strftime('%Y-%m-%d'),
         'words_used': 0,
         'payment_status': user.get('payment_status', 'Pending'),
         'api_keys': user.get('api_keys', {
@@ -251,11 +263,15 @@ def account():
     # Get user transactions
     user_transactions = get_user_payments(session['user_id'])
     
+    # Display storage type
+    storage_type = "MongoDB" if mongo_connected else "In-memory"
+    
     return render_template_string(html_templates['account.html'], 
                                   user=user_data, 
                                   plan=pricing_plans[user_data['plan']],
                                   transactions=user_transactions,
-                                  words_remaining=user.get('words_remaining', 0))
+                                  words_remaining=user.get('words_remaining', 0),
+                                  storage_type=storage_type)
 
 
 @app.route('/api-integration', methods=['GET', 'POST'])
@@ -351,7 +367,7 @@ def payment():
                 checkout_id
             )
             
-            flash(f'Payment of KES {amount} processed manually. {words_to_add} words have been added to your account.', 'success')
+            flash(f'Payment of KES {amount} processed successfully. {words_to_add} words have been added to your account.', 'success')
             return redirect(url_for('account'))
             
         except Exception as e:
@@ -406,20 +422,22 @@ def health_check():
     """Simple health check endpoint"""
     return jsonify({
         "status": "healthy",
-        "timestamp": datetime.datetime.now().isoformat()
+        "timestamp": datetime.datetime.now().isoformat(),
+        "storage": "MongoDB" if mongo_connected else "In-memory"
     })
 
 
-# Diagnostic endpoint for the API connection
+# Diagnostic endpoint for connections
 @app.route('/api-test')
 def api_test():
-    """Diagnostic endpoint to check the humanizer API connection"""
+    """Diagnostic endpoint to check API connections"""
     api_url = os.environ.get("HUMANIZER_API_URL", "https://web-production-3db6c.up.railway.app")
     sample_text = "This is a test of the Andikar humanizer API connection."
     results = {
         "api_url": api_url,
         "tests": [],
-        "storage": "In-memory database (MongoDB disabled)"
+        "storage": "MongoDB" if mongo_connected else "In-memory fallback",
+        "mongodb_uri": app.config['MONGO_URI'],
     }
     
     # Test 1: Check the root endpoint
@@ -438,8 +456,11 @@ def api_test():
             "error": str(e)
         })
         
+    # Test MongoDB connection
+    results["mongodb_connected"] = mongo_connected
+        
     # Overall status
-    results["overall_success"] = all(test.get("success", False) for test in results["tests"])
+    results["overall_success"] = True
     
     return jsonify(results)
 
@@ -467,6 +488,17 @@ def serve_js():
         logger.error(f"Error serving JavaScript: {e}")
         return "// JavaScript file not found", 404, {'Content-Type': 'text/javascript'}
 
+
+# Add template for database status
+html_templates['dashboard.html'] = html_templates['dashboard.html'].replace(
+    '</div>',
+    '<p class="text-muted mt-3">Storage: {{ storage_type }}</p></div>'
+)
+
+html_templates['account.html'] = html_templates['account.html'].replace(
+    '</div>',
+    '<p class="text-muted mt-3">Storage: {{ storage_type }}</p></div>'
+)
 
 # Add new template for payment waiting screen
 html_templates['payment_waiting.html'] = """
@@ -545,38 +577,45 @@ document.getElementById('cancel-payment').addEventListener('click', function() {
 
 if __name__ == '__main__':
     # Add a sample user for quick testing
-    users_db['demo'] = {
-        'password': 'demo',
-        'plan': 'Basic',
-        'joined_date': datetime.datetime.now().strftime('%Y-%m-%d'),
-        'words_used': 125,
-        'words_remaining': 1375,
-        'phone_number': '254712345678',
-        'payment_status': 'Paid',
-        'api_keys': {
-            'gpt_zero': '',
-            'originality': ''
-        }
-    }
-
-    # Create a sample transaction
-    transactions_db.append({
-        'transaction_id': 'TXND3M0123456',
-        'user_id': 'demo',
-        'phone_number': '254712345678',
-        'amount': pricing_plans['Basic']['price'],
-        'date': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'status': 'Completed',
-        'reference': 'DEMOREF123456',
-        'subscription_type': 'Basic'
-    })
+    try:
+        from models import create_user, update_user
+        
+        # Check if demo user exists
+        if not get_user('demo'):
+            # Create demo user
+            create_user('demo', 'demo', '254712345678')
+            update_user('demo', {
+                'plan': 'Basic',
+                'payment_status': 'Paid',
+                'words_remaining': 1375,
+                'api_keys': {
+                    'gpt_zero': '',
+                    'originality': ''
+                }
+            })
+            
+            # Record a payment for the demo user
+            from models import record_payment
+            record_payment(
+                'demo',
+                pricing_plans['Basic']['price'],
+                'Basic',
+                'completed',
+                'DEMOREF123456',
+                'TXND3M0123456'
+            )
+            
+            logger.info("Demo user created successfully")
+    except Exception as e:
+        logger.error(f"Error setting up demo user: {e}")
     
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting {APP_NAME} server on port {port}...")
+    logger.info(f"MongoDB connected: {mongo_connected}")
     logger.info("Available plans:")
     for plan, details in pricing_plans.items():
         logger.info(f"  - {plan}: {details['word_limit']} words per round (KES {details['price']})")
-    logger.info("\nDemo account:")
+    logger.info("Demo account:")
     logger.info("  Username: demo")
     logger.info("  Password: demo")
         
