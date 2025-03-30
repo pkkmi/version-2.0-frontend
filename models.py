@@ -1,10 +1,9 @@
 from flask_pymongo import PyMongo
-from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError, OperationFailure
 from datetime import datetime
 import logging
 import time
 import threading
-import signal
 
 # MongoDB connection
 mongo = PyMongo()
@@ -15,10 +14,6 @@ mongo_retry_thread = None
 users_db = {}
 transactions_db = []
 
-# Set a signal handler for timeouts
-def timeout_handler(signum, frame):
-    raise TimeoutError("MongoDB connection timed out")
-
 def retry_mongo_connection(app):
     """Background thread to retry MongoDB connection"""
     global mongo_connected
@@ -26,10 +21,9 @@ def retry_mongo_connection(app):
         try:
             app.logger.info("Attempting to reconnect to MongoDB...")
             # Test connection with a short timeout
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(3)  # 3-second timeout
             try:
-                mongo.db.command('ping')
+                # Don't use signals in thread
+                mongo.db.command('ping', maxTimeMS=3000)
                 mongo_connected = True
                 app.logger.info("Successfully reconnected to MongoDB!")
                 
@@ -46,8 +40,6 @@ def retry_mongo_connection(app):
                 sync_memory_to_mongo(app)
             except Exception as e:
                 app.logger.warning(f"MongoDB ping failed: {e}")
-            finally:
-                signal.alarm(0)  # Disable alarm
         except Exception as e:
             app.logger.warning(f"MongoDB reconnection failed: {e}")
             
@@ -136,10 +128,25 @@ def init_mongo(app):
         if 'MONGO_URI' in app.config:
             # Check if we're using internal URL
             if 'mongodb.railway.internal' in app.config['MONGO_URI']:
-                # Switch to external URL
-                app.config['MONGO_URI'] = app.config.get('MONGO_PUBLIC_URL', 
-                    'mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@metro.proxy.rlwy.net:52335/lipia')
-                app.logger.info(f"Using MongoDB external URL: {app.config['MONGO_URI']}")
+                # Try to fix database name
+                if '/lipia' not in app.config['MONGO_URI'] and not app.config['MONGO_URI'].endswith('/'):
+                    app.config['MONGO_URI'] += '/lipia'
+                
+                # Switch to external URL if available
+                if 'MONGO_PUBLIC_URL' in app.config:
+                    app.config['MONGO_URI'] = app.config['MONGO_PUBLIC_URL']
+                    app.logger.info(f"Using MongoDB external URL: {app.config['MONGO_URI']}")
+                    
+                    # Ensure database name is included
+                    if '/lipia' not in app.config['MONGO_URI'] and not app.config['MONGO_URI'].endswith('/'):
+                        app.config['MONGO_URI'] += '/lipia'
+        
+        # Clean URL for logging
+        clean_url = app.config['MONGO_URI'].replace(
+            app.config.get('MONGO_INITDB_ROOT_PASSWORD', 'password'), 
+            '****'
+        )
+        app.logger.info(f"Using MongoDB URI: {clean_url}")
         
         # Set shorter connection timeouts
         app.config['MONGO_OPTIONS'] = {
@@ -152,13 +159,10 @@ def init_mongo(app):
         mongo.init_app(app)
         app.logger.info("Testing MongoDB connection...")
         
-        # Test connection with a short timeout
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(3)  # 3-second timeout
-        
+        # Test connection with a timeout
         try:
-            # Test connection
-            mongo.db.command('ping')
+            # Use maxTimeMS instead of signals
+            mongo.db.command('ping', maxTimeMS=3000)
             mongo_connected = True
             app.logger.info("MongoDB connected successfully!")
             
@@ -173,10 +177,8 @@ def init_mongo(app):
         except Exception as e:
             app.logger.error(f"MongoDB ping failed: {e}")
             mongo_connected = False
-        finally:
-            signal.alarm(0)  # Disable alarm
             
-    except (ConnectionFailure, ServerSelectionTimeoutError) as e:
+    except (ConnectionFailure, ServerSelectionTimeoutError, OperationFailure) as e:
         app.logger.error(f"MongoDB connection failed: {e}")
         app.logger.warning("Starting with in-memory database as fallback")
         mongo_connected = False
