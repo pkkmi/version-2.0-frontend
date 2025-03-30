@@ -7,6 +7,10 @@ import os
 import requests
 from functools import wraps
 import logging
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if it exists
+load_dotenv()
 
 from config import APP_NAME, pricing_plans
 from models import users_db, transactions_db, init_mongo, get_user, update_word_count, get_user_payments, mongo_connected
@@ -15,7 +19,7 @@ from templates import html_templates
 
 # Initialize Flask app
 app = Flask(__name__)
-# Use a fixed secret key instead of a random one
+# Use configured secret key or a fallback
 app.secret_key = os.environ.get('SECRET_KEY', '2e739f24f823e472c1899f068c1af7c06bc79a91')
 
 # Configure logging
@@ -23,18 +27,15 @@ logging.basicConfig(level=logging.INFO)
 logger = app.logger
 logger.info("Starting application...")
 
-# MongoDB configuration - use the public URL
-mongo_uri = os.environ.get(
-    'MONGO_PUBLIC_URL', 
-    'mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@metro.proxy.rlwy.net:52335/lipia'
-)
+# MongoDB configuration - use the configured URI
+mongo_uri = os.environ.get('MONGO_URI', 'mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@metro.proxy.rlwy.net:52335/lipia')
 
 # Make sure the DB name is included
-if '/lipia' not in mongo_uri and not mongo_uri.endswith('/lipia'):
-    if '?' in mongo_uri:
-        mongo_uri = mongo_uri.replace('?', '/lipia?')
-    else:
-        mongo_uri = mongo_uri + '/lipia'
+dbname = os.environ.get('MONGO_DBNAME', 'lipia')
+if f'/{dbname}' not in mongo_uri and '?' in mongo_uri:
+    mongo_uri = mongo_uri.replace('?', f'/{dbname}?')
+elif f'/{dbname}' not in mongo_uri:
+    mongo_uri = f"{mongo_uri}/{dbname}"
 
 app.config['MONGO_URI'] = mongo_uri
 logger.info(f"MongoDB URI: {mongo_uri}")
@@ -45,7 +46,12 @@ try:
     logger.info(f"MongoDB connected: {mongo_connected}")
 except Exception as e:
     logger.error(f"Error initializing MongoDB: {e}")
-    logger.warning("Continuing with in-memory storage")
+    if os.environ.get('MONGO_FALLBACK_TO_MEMORY', 'true').lower() == 'true':
+        logger.warning("Continuing with in-memory storage")
+    else:
+        logger.critical("MongoDB connection required but failed. Exiting application.")
+        import sys
+        sys.exit(1)
 
 # Register blueprints
 try:
@@ -357,7 +363,44 @@ def payment():
         amount = pricing_plans[plan_type]['price']
 
         try:
-            # Manual processing for now
+            # First try to use the payment API (from payment blueprint)
+            try:
+                payment_url = os.environ.get('PAYMENT_URL', 'https://lipia-online.vercel.app/link/andikartill')
+                
+                # Call the payment API through the payment blueprint
+                from payment import initiate_payment
+                response = initiate_payment({
+                    'username': session['user_id'], 
+                    'subscription_type': plan_type,
+                    'phone_number': phone_number
+                })
+                
+                if response and response.get('status') == 'success':
+                    # Payment immediately succeeded (unusual but handle it)
+                    flash(f'Payment of KES {amount} processed successfully. {response.get("words_added", 0)} words have been added to your account.', 'success')
+                    return redirect(url_for('account'))
+                elif response and response.get('status') == 'pending':
+                    # Show payment waiting screen
+                    checkout_id = response.get('checkout_id', 'UNKNOWN')
+                    return render_template_string(
+                        html_templates['payment_waiting.html'],
+                        checkout_id=checkout_id,
+                        phone=phone_number,
+                        amount=amount
+                    )
+                else:
+                    # Fall back to manual processing
+                    raise Exception("Payment API returned an unexpected response")
+            except ImportError:
+                # Fall back to manual processing
+                logger.warning("Payment module not available. Using manual processing.")
+                raise Exception("Payment API not available")
+            except Exception as e:
+                logger.error(f"Payment API error: {str(e)}")
+                # Fall back to manual processing
+                raise
+                
+            # Manual processing as fallback
             from models import update_user, update_word_count, record_payment
             
             # Generate a transaction ID
@@ -384,12 +427,15 @@ def payment():
             return redirect(url_for('account'))
             
         except Exception as e:
-            logger.error(f"Manual payment error: {str(e)}")
+            logger.error(f"Payment error: {str(e)}")
             flash(f"Payment error: {str(e)}", 'error')
 
+    # Use payment URL from environment or default
+    payment_url = os.environ.get('PAYMENT_URL', 'https://lipia-online.vercel.app/link/andikartill')
+    
     return render_template_string(html_templates['payment.html'],
                                   plan=pricing_plans[user.get('plan', 'Free')],
-                                  payment_url="https://lipia-online.vercel.app/link/andikartill")
+                                  payment_url=payment_url)
 
 
 @app.route('/upgrade', methods=['GET', 'POST'])
@@ -437,7 +483,9 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.datetime.now().isoformat(),
         "storage": "MongoDB" if mongo_connected else "In-memory",
-        "mongo_url": app.config['MONGO_URI']
+        "mongo_uri": app.config['MONGO_URI'].replace(":tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@", ":***@"),  # Hide password
+        "version": "2.2.0",
+        "mongodb_connected": mongo_connected
     })
 
 
@@ -451,8 +499,8 @@ def api_test():
         "api_url": api_url,
         "tests": [],
         "storage": "MongoDB" if mongo_connected else "In-memory fallback",
-        "mongodb_uri": app.config['MONGO_URI'],
-        "app_version": "2.1.0 - Hybrid Storage"
+        "mongodb_uri": app.config['MONGO_URI'].replace(":tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@", ":***@"),  # Hide password
+        "app_version": "2.2.0 - Hybrid Storage"
     }
     
     # Test 1: Check the root endpoint
@@ -624,7 +672,7 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"Error setting up demo user: {e}")
     
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 8080))
     logger.info(f"Starting {APP_NAME} server on port {port}...")
     logger.info(f"MongoDB connected: {mongo_connected}")
     logger.info("Available plans:")
