@@ -583,79 +583,22 @@ def pricing():
     current_plan = user.get('plan', 'Free')
     payment_status = user.get('payment_status', 'Pending')
     
-    # Get payment URL from environment or default
-    payment_url = os.environ.get('PAYMENT_URL', 'https://lipia-online.vercel.app/link/andikartill')
+    # Store selected plan in session if provided
+    if request.method == 'POST' and 'plan' in request.form:
+        session['subscription_type'] = request.form['plan']
+        return redirect(url_for('payment.payment_page'))
     
     return render_template('pricing.html', 
                          pricing_plans=pricing_plans,
                          current_plan=current_plan,
-                         payment_status=payment_status,
-                         payment_url=payment_url)
+                         payment_status=payment_status)
 
 
-@app.route('/payment', methods=['GET', 'POST'])
+@app.route('/payment')
 @login_required
 def payment():
-    # Get user data
-    user = get_user(session['user_id'])
-    if not user:
-        flash('User not found', 'error')
-        return redirect(url_for('login'))
-    
-    # Check if payment is needed
-    if user.get('payment_status') == 'Paid':
-        flash('Your account is already paid and active', 'info')
-        return redirect(url_for('dashboard'))
-    
-    if request.method == 'POST':
-        phone_number = request.form['phone_number']
-        plan_type = user.get('plan', 'Free')
-        amount = pricing_plans[plan_type]['price']
-
-        try:
-            # Format phone number
-            from payment import format_phone_for_api
-            formatted_phone = format_phone_for_api(phone_number)
-            
-            # Call our payment API
-            from payment import initiate_payment
-            response = requests.post(
-                url_for('payment.initiate_payment', _external=True),
-                json={
-                    'username': session['user_id'],
-                    'subscription_type': plan_type,
-                    'phone_number': formatted_phone
-                },
-                headers={'Content-Type': 'application/json'}
-            ).json()
-            
-            if response.get('status') == 'success':
-                # Payment immediately succeeded
-                words_added = response.get('words_added', 0)
-                flash(f'Payment of ${amount} processed successfully. {words_added} words have been added to your account.', 'success')
-                return redirect(url_for('account'))
-            elif response.get('status') == 'pending':
-                # Payment initiated, show payment waiting screen
-                checkout_id = response.get('checkout_id')
-                return render_template('payment_waiting.html',
-                                      checkout_id=checkout_id,
-                                      phone=formatted_phone,
-                                      amount=amount)
-            else:
-                # Error handling
-                flash(f"Payment error: {response.get('message', 'Unknown error')}", 'error')
-                return redirect(url_for('payment'))
-                
-        except Exception as e:
-            logger.error(f"Payment error: {str(e)}")
-            flash(f"Payment error: {str(e)}", 'error')
-
-    # Use payment URL from environment or default
-    payment_url = os.environ.get('PAYMENT_URL', 'https://lipia-online.vercel.app/link/andikartill')
-    
-    return render_template('payment.html',
-                          plan=pricing_plans[user.get('plan', 'Free')],
-                          payment_url=payment_url)
+    # Redirect to the payment blueprint
+    return redirect(url_for('payment.payment_page'))
 
 
 @app.route('/upgrade', methods=['GET', 'POST'])
@@ -679,8 +622,11 @@ def upgrade():
             'payment_status': 'Pending'
         })
         
+        # Store selected plan in session
+        session['subscription_type'] = new_plan
+        
         flash(f'Your plan has been upgraded to {new_plan}. Please complete payment to activate.', 'success')
-        return redirect(url_for('payment'))
+        return redirect(url_for('payment.payment_page'))
 
     available_plans = {k: v for k, v in pricing_plans.items() if k != current_plan}
     return render_template('upgrade.html', 

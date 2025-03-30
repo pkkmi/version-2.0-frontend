@@ -167,8 +167,6 @@ def process_payment_callback(callback_data):
 
         # Update word count based on subscription type (same as Python script)
         words_to_add = 100 if subscription_type == 'basic' else 1000
-        if subscription_type in pricing_plans:
-            words_to_add = pricing_plans[subscription_type]['word_limit']
         
         new_word_count = update_word_count(username, words_to_add)
 
@@ -214,6 +212,33 @@ def init_callback_server():
     return True
 
 # Routes
+@payment_bp.route('/', methods=['GET'])
+def payment_page():
+    """Show payment page"""
+    # Get user data
+    username = session.get('user_id')
+    if not username:
+        flash('Please login first', 'error')
+        return redirect(url_for('login'))
+    
+    user = get_user(username)
+    if not user:
+        flash('User not found', 'error')
+        return redirect(url_for('login'))
+    
+    # Make sure phone number format is clean by removing any quotes
+    phone_number = user.get('phone_number', '')
+    if isinstance(phone_number, str):
+        phone_number = phone_number.strip("'")
+        user['phone_number'] = phone_number
+    
+    # Use subscription type from session or default to Basic
+    subscription_type = session.get('subscription_type', 'Basic')
+    
+    return render_template('payment.html', 
+                          plan=pricing_plans[subscription_type],
+                          user=user)
+
 @payment_bp.route('/initiate', methods=['POST'])
 def initiate_payment():
     """Initiate payment process - Implementation directly from Python script"""
@@ -255,6 +280,10 @@ def initiate_payment():
             
         if not phone:
             return jsonify({"error": "User has no phone number"}), 400
+            
+        # If phone is stored with quotes, remove them
+        if isinstance(phone, str):
+            phone = phone.strip("'")
     except Exception as e:
         current_app.logger.error(f"Error getting user data: {e}")
         return jsonify({"error": f"Error getting user data: {str(e)}"}), 500
@@ -300,14 +329,8 @@ def initiate_payment():
             words_to_add = pricing_plans[subscription_type.capitalize()]['word_limit']
             new_word_count = update_word_count(username, words_to_add)
             
-            return jsonify({
-                "status": "success",
-                "message": "Free plan activated successfully",
-                "checkout_id": checkout_id,
-                "reference": transaction_data['reference'],
-                "words_added": words_to_add,
-                "new_word_count": new_word_count
-            }), 200
+            flash(f"Free plan activated! {words_to_add} words have been added to your account.", "success")
+            return redirect(url_for('dashboard'))
         
         # For paid plans, proceed with payment API
         # Prepare API request
@@ -379,14 +402,8 @@ def initiate_payment():
                     words_to_add = 100 if subscription_type == 'basic' else 1000
                     new_word_count = update_word_count(username, words_to_add)
                     
-                    return jsonify({
-                        "status": "success",
-                        "message": "Payment processed successfully",
-                        "checkout_id": checkout_id,
-                        "reference": reference,
-                        "words_added": words_to_add,
-                        "new_word_count": new_word_count
-                    }), 200
+                    flash(f"Payment successful! {words_to_add} words have been added to your account.", "success")
+                    return redirect(url_for('dashboard'))
                     
                 elif 'data' in response_data and 'CheckoutRequestID' in response_data['data']:
                     # Payment initiated, waiting for callback
@@ -417,11 +434,11 @@ def initiate_payment():
                     # Add to ACTIVE_TRANSACTIONS
                     ACTIVE_TRANSACTIONS[checkout_id] = 'pending'
                     
-                    return jsonify({
-                        "status": "pending",
-                        "message": "Payment request sent to your phone",
-                        "checkout_id": checkout_id
-                    }), 202
+                    # Redirect to payment waiting page
+                    return redirect(url_for('payment.payment_waiting', 
+                                          checkout_id=checkout_id, 
+                                          amount=amount, 
+                                          phone=formatted_phone))
                 else:
                     # Error in API response
                     raise Exception(f"Unexpected API response: {response_data}")
@@ -468,21 +485,24 @@ def initiate_payment():
             words_to_add = 100 if subscription_type == 'basic' else 1000
             new_word_count = update_word_count(username, words_to_add)
             
-            return jsonify({
-                "status": "success",
-                "message": "Payment processed successfully (manual processing)",
-                "checkout_id": checkout_id,
-                "reference": transaction_data['reference'],
-                "words_added": words_to_add,
-                "new_word_count": new_word_count
-            }), 200
+            flash(f"Payment processed manually. {words_to_add} words have been added to your account.", "success")
+            return redirect(url_for('dashboard'))
         
     except Exception as e:
         current_app.logger.error(f"Error processing payment: {str(e)}")
-        return jsonify({
-            "status": "error",
-            "message": f"Error processing payment: {str(e)}"
-        }), 500
+        flash(f"Error processing payment: {str(e)}", "error")
+        return redirect(url_for('payment.payment_page'))
+
+@payment_bp.route('/waiting/<checkout_id>')
+def payment_waiting(checkout_id):
+    """Show payment waiting screen"""
+    amount = request.args.get('amount', '0')
+    phone = request.args.get('phone', '')
+    
+    return render_template('payment_waiting.html', 
+                          checkout_id=checkout_id,
+                          amount=amount,
+                          phone=phone)
 
 @payment_bp.route('/callback', methods=['POST'])
 def payment_callback():
@@ -619,26 +639,6 @@ def check_payment_status(checkout_id):
             "status": "error",
             "message": f"Error retrieving transaction: {str(e)}"
         }), 500
-
-@payment_bp.route('/validate-phone', methods=['POST'])
-def validate_phone():
-    """Validate phone number format"""
-    data = request.json
-    phone = data.get('phone')
-    
-    if not phone:
-        return jsonify({"status": "error", "message": "No phone number provided"}), 400
-    
-    try:
-        formatted_phone = format_phone_for_api(phone)
-        return jsonify({
-            "status": "success",
-            "original": phone,
-            "formatted": formatted_phone,
-            "valid": len(formatted_phone) == 10 and formatted_phone.startswith('07')
-        }), 200
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
 
 @payment_bp.route('/cancel/<checkout_id>', methods=['POST'])
 def cancel_payment(checkout_id):

@@ -23,12 +23,7 @@
                     </ul>
                     <form method="post" action="{{ url_for('payment.initiate') }}" class="mt-3">
                         <input type="hidden" name="subscription_type" value="basic">
-                        <div class="mb-3">
-                            <label for="phone_number_basic" class="form-label">Phone Number</label>
-                            <input type="text" class="form-control" id="phone_number_basic" name="phone_number" 
-                                placeholder="07XXXXXXXX" required value="{{ user.phone_number }}">
-                            <div class="form-text">Enter your M-PESA phone number for payment.</div>
-                        </div>
+                        <input type="hidden" name="phone_number" value="{{ user.phone_number }}">
                         <div class="d-grid">
                             <button type="submit" class="btn btn-primary">Pay for Basic</button>
                         </div>
@@ -56,12 +51,7 @@
                     </ul>
                     <form method="post" action="{{ url_for('payment.initiate') }}" class="mt-3">
                         <input type="hidden" name="subscription_type" value="premium">
-                        <div class="mb-3">
-                            <label for="phone_number_premium" class="form-label">Phone Number</label>
-                            <input type="text" class="form-control" id="phone_number_premium" name="phone_number" 
-                                placeholder="07XXXXXXXX" required value="{{ user.phone_number }}">
-                            <div class="form-text">Enter your M-PESA phone number for payment.</div>
-                        </div>
+                        <input type="hidden" name="phone_number" value="{{ user.phone_number }}">
                         <div class="d-grid">
                             <button type="submit" class="btn btn-success">Pay for Premium</button>
                         </div>
@@ -79,9 +69,8 @@
             <p><strong>How it works:</strong></p>
             <ol>
                 <li>Select your preferred subscription plan</li>
-                <li>Enter your M-PESA phone number</li>
                 <li>Click the payment button</li>
-                <li>You'll receive an M-PESA payment request on your phone</li>
+                <li>You'll receive an M-PESA payment request on your phone ({{ user.phone_number }})</li>
                 <li>Approve the payment on your phone</li>
                 <li>Words will be automatically added to your account</li>
             </ol>
@@ -95,42 +84,4 @@
         <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Back to Dashboard</a>
     </div>
 </div>
-
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    // Format phone number
-    function setupPhoneFormatting(elementId) {
-        var phoneField = document.getElementById(elementId);
-        if (phoneField) {
-            phoneField.addEventListener('blur', function() {
-                let phone = this.value.trim();
-                
-                // Remove non-digit characters
-                phone = phone.replace(/\D/g, '');
-                
-                // Format based on common patterns
-                if (phone.startsWith('254') && phone.length > 9) {
-                    // Convert from 254XXXXXXXXX to 07XXXXXXXX
-                    phone = '0' + phone.substring(3);
-                } else if (!phone.startsWith('0') && phone.length > 8) {
-                    // Add leading 0 if missing
-                    phone = '0' + phone;
-                }
-                
-                // Format to match 07XXXXXXXX
-                if (phone.length > 10) {
-                    phone = phone.substring(0, 10);
-                }
-                
-                // Update the field
-                this.value = phone;
-            });
-        }
-    }
-    
-    // Setup phone formatting for both forms
-    setupPhoneFormatting('phone_number_basic');
-    setupPhoneFormatting('phone_number_premium');
-});
-</script>
 {% endblock %}
