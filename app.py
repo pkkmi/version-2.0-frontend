@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, request, redirect, url_for, session, flash, jsonify
+from flask import Flask, render_template, render_template_string, request, redirect, url_for, session, flash, jsonify
 import random
 import string
 import datetime
@@ -10,6 +10,8 @@ import time
 from functools import wraps
 import logging
 from dotenv import load_dotenv
+from jinja2 import FileSystemLoader, PackageLoader, ChoiceLoader, select_autoescape
+import jinja2
 
 # Load environment variables from .env file if it exists
 load_dotenv()
@@ -17,7 +19,6 @@ load_dotenv()
 from config import APP_NAME, pricing_plans
 from models import users_db, transactions_db, init_mongo, get_user, update_word_count, get_user_payments, mongo_connected
 from utils import humanize_text, detect_ai_content, register_user_to_backend
-from templates import html_templates
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -62,6 +63,201 @@ except Exception as e:
         import sys
         sys.exit(1)
 
+# Define basic templates directly in the app.py file to ensure they're available
+BASE_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Andikar AI{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.1/css/all.min.css">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="/">Andikar AI</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    {% if session.user_id %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('dashboard') }}">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('humanize') }}">Humanize</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('detect') }}">Detect AI</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('pricing') }}">Pricing</a>
+                    </li>
+                    {% else %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('index') }}">Home</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('faq') }}">FAQ</a>
+                    </li>
+                    {% endif %}
+                </ul>
+                <ul class="navbar-nav">
+                    {% if session.user_id %}
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown">
+                            {{ session.user_id }}
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="{{ url_for('account') }}">Account</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('api_integration') }}">API Integration</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{{ url_for('logout') }}">Logout</a></li>
+                        </ul>
+                    </li>
+                    {% else %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('login') }}">Login</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('register') }}">Register</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4 mb-4">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category if category != 'message' else 'info' }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+    </div>
+
+    {% block content %}{% endblock %}
+
+    <footer class="bg-dark text-white text-center py-4 mt-5">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-4">
+                    <h5>Andikar AI</h5>
+                    <p>Making AI text more human.</p>
+                </div>
+                <div class="col-md-4">
+                    <h5>Links</h5>
+                    <ul class="list-unstyled">
+                        <li><a href="{{ url_for('index') }}" class="text-white">Home</a></li>
+                        <li><a href="{{ url_for('faq') }}" class="text-white">FAQ</a></li>
+                        <li><a href="{{ url_for('community') }}" class="text-white">Community</a></li>
+                    </ul>
+                </div>
+                <div class="col-md-4">
+                    <h5>Contact</h5>
+                    <p>support@andikar.ai</p>
+                </div>
+            </div>
+            <div class="mt-3">
+                <p>&copy; 2025 Andikar AI. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/script.js"></script>
+</body>
+</html>
+"""
+
+INDEX_TEMPLATE = """
+{% extends "base.html" %}
+{% block title %}Home - Andikar AI{% endblock %}
+{% block content %}
+<div class="container">
+    <div class="jumbotron text-center my-5 py-5">
+        <h1 class="display-4">Welcome to Andikar AI</h1>
+        <p class="lead">Humanize your AI-generated text with our advanced processing technology</p>
+        <hr class="my-4">
+        <p>Transform robotic-sounding AI content into natural, human-like writing with our simple tools.</p>
+        <div class="mt-4">
+            <a class="btn btn-primary btn-lg" href="{{ url_for('register') }}" role="button">Get Started</a>
+            <a class="btn btn-outline-secondary btn-lg ms-2" href="{{ url_for('faq') }}" role="button">Learn More</a>
+        </div>
+    </div>
+
+    <div class="row mb-5">
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-body text-center">
+                    <i class="fas fa-sync fa-4x mb-3 text-primary"></i>
+                    <h3 class="card-title">Humanize Text</h3>
+                    <p class="card-text">Convert AI-generated text into natural-sounding human writing that passes AI detection tools.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-body text-center">
+                    <i class="fas fa-search fa-4x mb-3 text-primary"></i>
+                    <h3 class="card-title">Detect AI Content</h3>
+                    <p class="card-text">Check if text was written by AI or a human with our accurate detection tool.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-body text-center">
+                    <i class="fas fa-code fa-4x mb-3 text-primary"></i>
+                    <h3 class="card-title">API Integration</h3>
+                    <p class="card-text">Integrate our tools directly into your workflow with our developer-friendly API.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row my-5">
+        <div class="col-md-6">
+            <h2>Why Choose Andikar AI?</h2>
+            <ul class="list-group list-group-flush">
+                <li class="list-group-item"><i class="fas fa-check text-success me-2"></i> Natural language processing for human-like text</li>
+                <li class="list-group-item"><i class="fas fa-check text-success me-2"></i> Passes AI detection tools</li>
+                <li class="list-group-item"><i class="fas fa-check text-success me-2"></i> Simple, easy-to-use interface</li>
+                <li class="list-group-item"><i class="fas fa-check text-success me-2"></i> Flexible subscription options</li>
+                <li class="list-group-item"><i class="fas fa-check text-success me-2"></i> Developer-friendly API</li>
+            </ul>
+        </div>
+        <div class="col-md-6">
+            <h2>Get Started Today</h2>
+            <p>Create your account to start humanizing your AI-generated content:</p>
+            <ol>
+                <li>Register for an account</li>
+                <li>Choose your subscription plan</li>
+                <li>Start humanizing your content</li>
+            </ol>
+            <p>Try our Free plan to test the service, then upgrade to unlock more features.</p>
+            <a href="{{ url_for('register') }}" class="btn btn-primary">Create an Account</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+"""
+
+# Setup template environment
+templates = {
+    'base.html': BASE_TEMPLATE,
+    'index.html': INDEX_TEMPLATE,
+}
+
 # Register blueprints
 try:
     from auth import auth_bp, login_required
@@ -92,10 +288,27 @@ except Exception as e:
             return f(*args, **kwargs)
         return decorated_function
 
+# Create a dictionary-based template loader
+class DictLoader(jinja2.BaseLoader):
+    def __init__(self, templates):
+        self.templates = templates
+        
+    def get_source(self, environment, template):
+        if template in self.templates:
+            source = self.templates[template]
+            return source, None, lambda: True
+        raise jinja2.exceptions.TemplateNotFound(template)
+
+# Add our dictionary loader to Flask's Jinja environment
+app.jinja_loader = ChoiceLoader([
+    FileSystemLoader('templates'),
+    DictLoader(templates)
+])
+
 # Routes
 @app.route('/')
 def index():
-    return render_template_string(html_templates['index.html'])
+    return render_template('index.html')
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -114,7 +327,7 @@ def login():
         else:
             flash('Invalid credentials', 'error')
 
-    return render_template_string(html_templates['login.html'])
+    return render_template('login.html')
 
 
 @app.route('/register', methods=['GET', 'POST'])
@@ -171,7 +384,7 @@ def register():
                 logger.error(f"Error creating user: {str(e)}")
                 flash(f"Registration error: {str(e)}", 'error')
 
-    return render_template_string(html_templates['register.html'], pricing_plans=pricing_plans)
+    return render_template('register.html', pricing_plans=pricing_plans)
 
 
 @app.route('/dashboard')
@@ -195,7 +408,7 @@ def dashboard():
         })
     }
     
-    return render_template_string(html_templates['dashboard.html'], user=user_data,
+    return render_template('dashboard.html', user=user_data,
                                   plan=pricing_plans[user_data['plan']],
                                   words_remaining=user.get('words_remaining', 0))
 
@@ -240,12 +453,12 @@ def humanize():
             flash('Please complete payment to access premium features', 'warning')
             return redirect(url_for('pricing'))
 
-    return render_template_string(html_templates.get('humanize.html', '{% extends "base.html" %}{% block title %}Humanize Text{% endblock %}{% block content %}<div class="container"><h1>Humanize Text</h1><p>Please check back later for this feature.</p></div>{% endblock %}'),
-                                  message=message,
-                                  humanized_text=humanized_text,
-                                  payment_required=payment_required,
-                                  words_remaining=words_remaining,
-                                  word_limit=pricing_plans[user.get('plan', 'Free')]['word_limit'])
+    return render_template('humanize.html',
+                          message=message,
+                          humanized_text=humanized_text,
+                          payment_required=payment_required,
+                          words_remaining=words_remaining,
+                          word_limit=pricing_plans[user.get('plan', 'Free')]['word_limit'])
 
 
 @app.route('/detect', methods=['GET', 'POST'])
@@ -273,10 +486,10 @@ def detect():
             flash('Please complete payment to access premium features', 'warning')
             return redirect(url_for('pricing'))
 
-    return render_template_string(html_templates.get('detect.html', '{% extends "base.html" %}{% block title %}Detect AI{% endblock %}{% block content %}<div class="container"><h1>Detect AI</h1><p>Please check back later for this feature.</p></div>{% endblock %}'),
-                                  result=result,
-                                  message=message,
-                                  payment_required=payment_required)
+    return render_template('detect.html',
+                          result=result,
+                          message=message,
+                          payment_required=payment_required)
 
 
 @app.route('/account')
@@ -303,11 +516,11 @@ def account():
     # Get user transactions
     user_transactions = get_user_payments(session['user_id'])
     
-    return render_template_string(html_templates['account.html'], 
-                                  user=user_data, 
-                                  plan=pricing_plans[user_data['plan']],
-                                  transactions=user_transactions,
-                                  words_remaining=user.get('words_remaining', 0))
+    return render_template('account.html', 
+                          user=user_data, 
+                          plan=pricing_plans[user_data['plan']],
+                          transactions=user_transactions,
+                          words_remaining=user.get('words_remaining', 0))
 
 
 @app.route('/api-integration', methods=['GET', 'POST'])
@@ -340,23 +553,22 @@ def api_integration():
         flash('API keys updated successfully!', 'success')
         return redirect(url_for('api_integration'))
 
-    return render_template_string(html_templates.get('api_integration.html', '{% extends "base.html" %}{% block title %}API Integration{% endblock %}{% block content %}<div class="container"><h1>API Integration</h1><p>Configure your API keys here.</p></div>{% endblock %}'),
-                                  api_keys=api_keys)
+    return render_template('api_integration.html', api_keys=api_keys)
 
 
 @app.route('/faq')
 def faq():
-    return render_template_string(html_templates.get('faq.html', '{% extends "base.html" %}{% block title %}FAQ{% endblock %}{% block content %}<div class="container"><h1>Frequently Asked Questions</h1><p>Coming soon...</p></div>{% endblock %}'))
+    return render_template('faq.html')
 
 
 @app.route('/community')
 def community():
-    return render_template_string(html_templates.get('community.html', '{% extends "base.html" %}{% block title %}Community{% endblock %}{% block content %}<div class="container"><h1>Community</h1><p>Coming soon...</p></div>{% endblock %}'))
+    return render_template('community.html')
 
 
 @app.route('/download')
 def download():
-    return render_template_string(html_templates.get('download.html', '{% extends "base.html" %}{% block title %}Download{% endblock %}{% block content %}<div class="container"><h1>Download</h1><p>Coming soon...</p></div>{% endblock %}'))
+    return render_template('download.html')
 
 
 @app.route('/pricing', methods=['GET', 'POST'])
@@ -374,11 +586,11 @@ def pricing():
     # Get payment URL from environment or default
     payment_url = os.environ.get('PAYMENT_URL', 'https://lipia-online.vercel.app/link/andikartill')
     
-    return render_template_string(html_templates.get('pricing.html', '{% extends "base.html" %}{% block title %}Pricing{% endblock %}{% block content %}<div class="container"><h1>Pricing</h1><p>Coming soon...</p></div>{% endblock %}'), 
-                                 pricing_plans=pricing_plans,
-                                 current_plan=current_plan,
-                                 payment_status=payment_status,
-                                 payment_url=payment_url)
+    return render_template('pricing.html', 
+                         pricing_plans=pricing_plans,
+                         current_plan=current_plan,
+                         payment_status=payment_status,
+                         payment_url=payment_url)
 
 
 @app.route('/payment', methods=['GET', 'POST'])
@@ -425,12 +637,10 @@ def payment():
             elif response.get('status') == 'pending':
                 # Payment initiated, show payment waiting screen
                 checkout_id = response.get('checkout_id')
-                return render_template_string(
-                    html_templates.get('payment_waiting.html', '{% extends "base.html" %}{% block title %}Payment Processing{% endblock %}{% block content %}<div class="container"><h1>Payment Processing</h1><p>Please wait...</p></div>{% endblock %}'),
-                    checkout_id=checkout_id,
-                    phone=formatted_phone,
-                    amount=amount
-                )
+                return render_template('payment_waiting.html',
+                                      checkout_id=checkout_id,
+                                      phone=formatted_phone,
+                                      amount=amount)
             else:
                 # Error handling
                 flash(f"Payment error: {response.get('message', 'Unknown error')}", 'error')
@@ -443,9 +653,9 @@ def payment():
     # Use payment URL from environment or default
     payment_url = os.environ.get('PAYMENT_URL', 'https://lipia-online.vercel.app/link/andikartill')
     
-    return render_template_string(html_templates.get('payment.html', '{% extends "base.html" %}{% block title %}Payment{% endblock %}{% block content %}<div class="container"><h1>Payment</h1><p>Coming soon...</p></div>{% endblock %}'),
-                                  plan=pricing_plans[user.get('plan', 'Free')],
-                                  payment_url=payment_url)
+    return render_template('payment.html',
+                          plan=pricing_plans[user.get('plan', 'Free')],
+                          payment_url=payment_url)
 
 
 @app.route('/upgrade', methods=['GET', 'POST'])
@@ -473,9 +683,9 @@ def upgrade():
         return redirect(url_for('payment'))
 
     available_plans = {k: v for k, v in pricing_plans.items() if k != current_plan}
-    return render_template_string(html_templates.get('upgrade.html', '{% extends "base.html" %}{% block title %}Upgrade{% endblock %}{% block content %}<div class="container"><h1>Upgrade</h1><p>Coming soon...</p></div>{% endblock %}'), 
-                                  current_plan=pricing_plans[current_plan],
-                                  available_plans=available_plans)
+    return render_template('upgrade.html', 
+                          current_plan=pricing_plans[current_plan],
+                          available_plans=available_plans)
 
 
 @app.route('/logout')
@@ -561,9 +771,6 @@ def serve_js():
         logger.error(f"Error serving JavaScript: {e}")
         return "// JavaScript file not found", 404, {'Content-Type': 'text/javascript'}
 
-
-# No need to manually replace templates since they're either loaded from files
-# or already defined in the templates.py file with fallbacks.
 
 if __name__ == '__main__':
     # Add a sample user for quick testing
