@@ -8,18 +8,18 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mongodb")
 
-# Connection details
-MONGO_USER = os.environ.get('MONGOUSER', 'mongo')
-MONGO_PASSWORD = os.environ.get('MONGOPASSWORD', 'tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg')
-MONGO_HOST = os.environ.get('MONGOHOST', 'metro.proxy.rlwy.net')
-MONGO_PORT = os.environ.get('MONGOPORT', '52335')
+# Connection details for MongoDB Atlas
+MONGO_USER = os.environ.get('MONGO_USER', 'edgarmaina003')
+MONGO_PASSWORD = os.environ.get('MONGO_PASSWORD', '<db_password>')
 MONGO_DBNAME = os.environ.get('MONGO_DBNAME', 'lipia')
-MONGO_URL = os.environ.get('MONGO_URL', 
-                           f"mongodb://{MONGO_USER}:{MONGO_PASSWORD}@{MONGO_HOST}:{MONGO_PORT}/{MONGO_DBNAME}")
+
+# MongoDB Atlas connection string
+MONGO_URL = os.environ.get('MONGO_URI', 
+                           f"mongodb+srv://{MONGO_USER}:{MONGO_PASSWORD}@oldtrafford.id96k.mongodb.net/{MONGO_DBNAME}?retryWrites=true&w=majority&appName=OldTrafford")
 
 # Public URL (for external access)
-MONGO_PUBLIC_URL = os.environ.get('MONGO_PUBLIC_URL', 
-                                 f"mongodb://{MONGO_USER}:{MONGO_PASSWORD}@metro.proxy.rlwy.net:52335/{MONGO_DBNAME}")
+MONGO_PUBLIC_URL = os.environ.get('MONGO_EXTERNAL_URI', 
+                                 f"mongodb+srv://{MONGO_USER}:{MONGO_PASSWORD}@oldtrafford.id96k.mongodb.net/{MONGO_DBNAME}?retryWrites=true&w=majority&appName=OldTrafford")
 
 # Connection flags
 mongo_connected = False
@@ -38,7 +38,7 @@ def initialize_mongodb():
         masked_url = connection_url.replace(MONGO_PASSWORD, "****")
         logger.info(f"Attempting to connect to MongoDB: {masked_url}")
         
-        # Set short timeouts
+        # Set timeouts
         client = MongoClient(
             connection_url,
             serverSelectionTimeoutMS=3000,  # 3 seconds for server selection
