@@ -2,8 +2,11 @@ import os
 import requests
 import json
 import uuid
+import queue
+import threading
+import socket
 from datetime import datetime
-from flask import Blueprint, request, jsonify, current_app, url_for
+from flask import Blueprint, request, jsonify, current_app, url_for, render_template, flash, redirect, session
 from models import get_user, update_word_count, record_payment, save_transaction, get_transaction, update_transaction_status
 from config import pricing_plans
 
@@ -11,9 +14,13 @@ from config import pricing_plans
 payment_bp = Blueprint('payment', __name__, url_prefix='/payment')
 
 # API constants - use the real credentials
-API_BASE_URL = "https://lipia-api.kreativelabske.com/api"
-API_KEY = "7c8a3202ae14857e71e3a9db78cf62139772cae6"
-PAYMENT_URL = "https://lipia-online.vercel.app/link/andikartill"
+API_BASE_URL = os.environ.get('LIPIA_API_URL', "https://lipia-api.kreativelabske.com/api")
+API_KEY = os.environ.get('LIPIA_API_KEY', "7c8a3202ae14857e71e3a9db78cf62139772cae6")
+PAYMENT_URL = os.environ.get('PAYMENT_URL', "https://lipia-online.vercel.app/link/andikartill")
+
+# Global callback queue for communication between server and request handlers
+CALLBACK_QUEUE = queue.Queue()
+ACTIVE_TRANSACTIONS = {}
 
 # Format phone number for API
 def format_phone_for_api(phone):
@@ -41,13 +48,99 @@ def format_phone_for_api(phone):
     current_app.logger.debug(f"Original phone: {phone} -> Formatted for API: {phone}")
     return phone
 
+# Find an available port for the callback server
+def find_available_port():
+    """Find an available port for the callback server"""
+    default_port = 8000
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        for port in range(default_port, default_port + 1000):
+            try:
+                s.bind(('localhost', port))
+                s.close()
+                return port
+            except:
+                continue
+        s.close()
+    except Exception as e:
+        current_app.logger.error(f"Error finding available port: {e}")
+    return default_port
+
+# Process callback data
+def process_payment_callback(callback_data):
+    """Process payment callback data"""
+    try:
+        checkout_id = callback_data.get('CheckoutRequestID')
+        if not checkout_id:
+            current_app.logger.warning("Callback missing CheckoutRequestID")
+            return False
+
+        # Look up transaction
+        transaction = get_transaction(checkout_id)
+        if not transaction:
+            current_app.logger.warning(f"Transaction not found for checkout_id: {checkout_id}")
+            return False
+
+        # Update transaction status
+        reference = callback_data.get('reference')
+        update_transaction_status(checkout_id, 'completed', reference)
+
+        # Update payment record
+        username = transaction['username']
+        amount = transaction['amount']
+        subscription_type = transaction['subscription_type']
+
+        # Record payment
+        record_payment(
+            username,
+            amount,
+            subscription_type,
+            'completed',
+            reference,
+            checkout_id
+        )
+
+        # Update word count
+        words_to_add = pricing_plans.get(subscription_type, {}).get('word_limit', 0)
+        new_word_count = update_word_count(username, words_to_add)
+
+        # Update ACTIVE_TRANSACTIONS
+        ACTIVE_TRANSACTIONS[checkout_id] = 'completed'
+
+        current_app.logger.info(f"Payment processed for user {username}, added {words_to_add} words")
+        return True
+    except Exception as e:
+        current_app.logger.error(f"Error processing callback: {e}")
+        return False
+
+# Function to check queue for callbacks
+def check_callbacks():
+    """Check for queued callbacks"""
+    try:
+        while not CALLBACK_QUEUE.empty():
+            callback_data = CALLBACK_QUEUE.get_nowait()
+            process_payment_callback(callback_data)
+    except Exception as e:
+        current_app.logger.error(f"Error in check_callbacks: {e}")
+
 # Routes
 @payment_bp.route('/initiate', methods=['POST'])
 def initiate_payment():
     """Initiate payment process"""
-    data = request.json
+    # Check if request is from our frontend or external API
+    if request.is_json:
+        data = request.json
+    else:
+        # Handle form data
+        data = {
+            'username': session.get('user_id'),
+            'subscription_type': request.form.get('subscription_type', 'Basic'),
+            'phone_number': request.form.get('phone_number')
+        }
+    
     username = data.get('username')
     subscription_type = data.get('subscription_type')
+    phone_override = data.get('phone_number')
     
     if not username or not subscription_type:
         return jsonify({"error": "Missing required parameters"}), 400
@@ -64,7 +157,12 @@ def initiate_payment():
         if not user:
             return jsonify({"error": "User not found"}), 404
         
-        phone = user.get('phone_number')
+        # Use provided phone or get from user data
+        if phone_override:
+            phone = phone_override
+        else:
+            phone = user.get('phone_number')
+            
         if not phone:
             return jsonify({"error": "User has no phone number"}), 400
     except Exception as e:
@@ -81,10 +179,13 @@ def initiate_payment():
             'Content-Type': 'application/json'
         }
         
+        # Add callback URL to payload
+        callback_url = url_for('payment.payment_callback', _external=True)
+        
         payload = {
             'phone': formatted_phone,
             'amount': str(amount),
-            'callback_url': url_for('payment.payment_callback', _external=True)
+            'callback_url': callback_url
         }
         
         current_app.logger.info(f"Sending payment request with phone: {formatted_phone}, amount: {amount}")
@@ -98,6 +199,8 @@ def initiate_payment():
                 json=payload,
                 timeout=15  # Wait up to 15 seconds for response
             )
+            
+            current_app.logger.info(f"API Response: {response.status_code} - {response.text}")
             
             # Process API response
             if response.status_code == 200:
@@ -170,6 +273,9 @@ def initiate_payment():
                         checkout_id
                     )
                     
+                    # Add to ACTIVE_TRANSACTIONS
+                    ACTIVE_TRANSACTIONS[checkout_id] = 'pending'
+                    
                     return jsonify({
                         "status": "pending",
                         "message": "Payment request sent to your phone",
@@ -239,7 +345,12 @@ def payment_callback():
     try:
         # Parse the JSON data from the callback
         callback_data = request.json
+        current_app.logger.info(f"Received payment callback: {callback_data}")
         
+        # Put in queue for processing
+        CALLBACK_QUEUE.put(callback_data)
+        
+        # Process immediately
         checkout_id = callback_data.get('CheckoutRequestID')
         if not checkout_id:
             return jsonify({"status": "error", "message": "Missing checkout ID"}), 400
@@ -289,6 +400,9 @@ def payment_callback():
             current_app.logger.error(f"Error updating word count: {e}")
             # Continue even if update fails
         
+        # Update ACTIVE_TRANSACTIONS
+        ACTIVE_TRANSACTIONS[checkout_id] = 'completed'
+        
         return jsonify({
             "status": "success",
             "message": "Callback processed successfully"
@@ -305,6 +419,24 @@ def payment_callback():
 def check_payment_status(checkout_id):
     """Check payment status"""
     try:
+        # Check in-memory ACTIVE_TRANSACTIONS first for faster response
+        if checkout_id in ACTIVE_TRANSACTIONS:
+            status = ACTIVE_TRANSACTIONS[checkout_id]
+            if status == 'completed':
+                transaction = get_transaction(checkout_id)
+                return jsonify({
+                    "status": "success",
+                    "transaction": {
+                        "checkout_id": checkout_id,
+                        "status": "completed",
+                        "reference": transaction.get('reference', 'N/A'),
+                        "amount": transaction.get('amount', 0),
+                        "subscription_type": transaction.get('subscription_type', 'unknown'),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }), 200
+        
+        # Fall back to database check
         transaction = get_transaction(checkout_id)
         
         if not transaction:
@@ -312,6 +444,9 @@ def check_payment_status(checkout_id):
                 "status": "error",
                 "message": "Transaction not found"
             }), 404
+        
+        # Update ACTIVE_TRANSACTIONS for future checks
+        ACTIVE_TRANSACTIONS[checkout_id] = transaction.get('status', 'unknown')
         
         return jsonify({
             "status": "success",
@@ -330,3 +465,36 @@ def check_payment_status(checkout_id):
             "status": "error",
             "message": f"Error retrieving transaction: {str(e)}"
         }), 500
+
+@payment_bp.route('/validate-phone', methods=['POST'])
+def validate_phone():
+    """Validate phone number format"""
+    data = request.json
+    phone = data.get('phone')
+    
+    if not phone:
+        return jsonify({"status": "error", "message": "No phone number provided"}), 400
+    
+    try:
+        formatted_phone = format_phone_for_api(phone)
+        return jsonify({
+            "status": "success",
+            "original": phone,
+            "formatted": formatted_phone,
+            "valid": len(formatted_phone) == 10 and formatted_phone.startswith('07')
+        }), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@payment_bp.route('/cancel/<checkout_id>', methods=['POST'])
+def cancel_payment(checkout_id):
+    """Cancel a pending payment"""
+    if checkout_id in ACTIVE_TRANSACTIONS:
+        ACTIVE_TRANSACTIONS[checkout_id] = 'cancelled'
+    
+    try:
+        update_transaction_status(checkout_id, 'cancelled')
+        return jsonify({"status": "success", "message": "Payment cancelled"}), 200
+    except Exception as e:
+        current_app.logger.error(f"Error cancelling payment: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
