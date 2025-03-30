@@ -28,7 +28,7 @@ logger = app.logger
 logger.info("Starting application...")
 
 # MongoDB configuration - use the configured URI
-mongo_uri = os.environ.get('MONGO_URI', 'mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@metro.proxy.rlwy.net:52335/lipia')
+mongo_uri = os.environ.get('MONGO_URI', 'mongodb+srv://edgarmaina003:<db_password>@oldtrafford.id96k.mongodb.net/lipia?retryWrites=true&w=majority&appName=OldTrafford')
 
 # Make sure the DB name is included
 dbname = os.environ.get('MONGO_DBNAME', 'lipia')
@@ -483,7 +483,7 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.datetime.now().isoformat(),
         "storage": "MongoDB" if mongo_connected else "In-memory",
-        "mongo_uri": app.config['MONGO_URI'].replace(":tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@", ":***@"),  # Hide password
+        "mongo_uri": app.config['MONGO_URI'].replace("<db_password>", "***"),  # Hide password
         "version": "2.2.0",
         "mongodb_connected": mongo_connected
     })
@@ -499,7 +499,7 @@ def api_test():
         "api_url": api_url,
         "tests": [],
         "storage": "MongoDB" if mongo_connected else "In-memory fallback",
-        "mongodb_uri": app.config['MONGO_URI'].replace(":tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@", ":***@"),  # Hide password
+        "mongodb_uri": app.config['MONGO_URI'].replace("<db_password>", "***"),  # Hide password
         "app_version": "2.2.0 - Hybrid Storage"
     }
     
