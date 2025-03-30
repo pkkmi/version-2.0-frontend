@@ -1,92 +1,110 @@
-# Andikar AI Frontend
+# Andikar AI - Version 2.0 Frontend
 
-A Flask frontend application for humanizing AI-generated text using the Andikar AI ecosystem.
+Version 2.0 frontend of Andikar AI Flask frontend application for humanizing AI-generated text with MongoDB integration and payment processing.
 
-## Setup Instructions
+## New Features
 
-### Prerequisites
-- Python 3.8 or higher
-- [Andikar Humanizer API](https://github.com/granitevolition/text-humanizer-api) running at https://web-production-3db6c.up.railway.app/ or another endpoint
+- **MongoDB Integration**: Replaced CSV-based storage with MongoDB
+- **Payment Processing**: Integrated with Lipia payment API for subscription management
+- **Word Credits System**: Track and manage word usage with a credit-based system
+- **RESTful API Endpoints**: Added API endpoints for external integration
 
-### Installation
+## Environment Variables
+
+The application uses the following environment variables:
+
+```
+SECRET_KEY=your_secret_key
+MONGO_URL=mongodb://username:password@host:port/database
+HUMANIZER_API_URL=https://your-humanizer-api.example.com
+ADMIN_API_URL=https://your-admin-api.example.com
+LIPIA_API_URL=https://lipia-api.kreativelabske.com/api
+LIPIA_API_KEY=your_lipia_api_key
+```
+
+## MongoDB Setup
+
+The application uses MongoDB for data storage. Make sure you have MongoDB instance running and configure the MONGO_URL environment variable.
+
+### MongoDB Collections
+
+- **users**: User account information and subscription details
+- **payments**: Payment records and transaction history
+- **transactions**: Detailed transaction processing data
+
+## Installation
 
 1. Clone the repository:
-   ```
-   git clone https://github.com/granitevolition/andikar-frontend.git
-   cd andikar-frontend
-   ```
+```bash
+git clone https://github.com/pkkmi/version-2.0-frontend.git
+cd version-2.0-frontend
+```
 
 2. Create a virtual environment:
-   ```
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
 
 3. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-
-4. Configure environment variables:
-   ```
-   cp .env.example .env
-   ```
-   Edit `.env` file to set the appropriate values, especially:
-   - `HUMANIZER_API_URL` - URL to your running Humanizer API service
-
-## Running the Application
-
-Start the Flask development server:
+```bash
+pip install -r requirements.txt
 ```
+
+4. Set up environment variables (create .env file based on .env.example)
+
+5. Run the application:
+```bash
 python app.py
 ```
 
-The application will be available at http://localhost:5000/
+## API Endpoints
 
-### Testing the Humanizer API Connection
+The application provides the following API endpoints:
 
-If you're having problems with the Humanizer API connection, use the diagnostic tool:
+### Authentication
 
-```
-python test_api.py
-```
+- `POST /api/register`: Register a new user
+- `POST /api/login`: Log in a user
+- `POST /api/logout`: Log out the current user
+- `GET /api/user`: Get current user data
+- `POST /api/user/update`: Update user data
+- `POST /api/user/consume-words`: Consume words from user's account
 
-This script will test the connection to the Humanizer API and provide detailed information about any issues.
+### Payment Processing
 
-## Troubleshooting
+- `POST /payment/initiate`: Initiate a payment
+- `POST /payment/callback`: Handle payment callback from payment provider
+- `GET /payment/check/<checkout_id>`: Check payment status
 
-### Humanizer API Connection Issues
+## Architecture
 
-If the humanizing functionality is not working:
+The application consists of the following components:
 
-1. Check that the Humanizer API is running at the URL specified in your `.env` file
-2. Run `python test_api.py` to diagnose connection issues
-3. Verify that the endpoint is correct (should be `/humanize_text`)
-4. Check for any network/firewall issues that might block the connection
-5. Inspect the logs for detailed error information
+1. **app.py**: Main application file with routes and Flask setup
+2. **models.py**: MongoDB models and data access functions
+3. **auth.py**: Authentication routes and user management
+4. **payment.py**: Payment processing and subscription management
+5. **utils.py**: Utility functions for text processing and API integration
+6. **templates.py**: HTML templates for the web interface
+7. **config.py**: Application configuration and pricing plans
 
-The application includes a fallback humanization function if the API is temporarily unavailable.
+## Subscription Plans
 
-## Features
+The application offers the following subscription plans:
 
-- User authentication and registration
-- Text humanization using external API
-- AI content detection
-- User dashboard with usage statistics
-- Tiered pricing plans with word limits
-- M-Pesa payment integration (simulated)
-- API key management for integration
+- **Free**: 500 words per round (KES 0)
+- **Basic**: 1,500 words per round (KES 500)
+- **Premium**: 8,000 words per round (KES 2,000)
 
-## Project Structure
+## Contributing
 
-- `app.py` - Main Flask application
-- `utils.py` - Utility functions including API integration
-- `models.py` - Data models and in-memory databases
-- `templates/` - HTML templates (embedded in templates.py)
-- `static/` - CSS and JavaScript files
-- `config.py` - Application configuration
-- `test_api.py` - Diagnostic tool for API connection
+1. Fork the repository
+2. Create your feature branch: `git checkout -b feature/my-new-feature`
+3. Commit your changes: `git commit -am 'Add some feature'`
+4. Push to the branch: `git push origin feature/my-new-feature`
+5. Submit a pull request
 
-## Deployment
+## License
 
-The application is designed to be deployed on Railway.app or similar platform. See the Railway documentation for deployment instructions.
+This project is licensed under the MIT License - see the LICENSE file for details.
