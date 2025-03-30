@@ -26,75 +26,66 @@ def retry_mongo_connection(app):
     
     while not mongo_connected:
         try:
-            app.logger.info("Attempting to reconnect to MongoDB...")
+            app.logger.info("Attempting to reconnect to MongoDB Atlas...")
             
-            # Get connection URIs
-            primary_uri = app.config.get('MONGO_URI')
-            fallback_uri = os.environ.get('MONGO_EXTERNAL_URI')
+            # Get connection URI (MongoDB Atlas)
+            mongo_uri = app.config.get('MONGO_URI')
             timeout = int(os.environ.get('MONGO_TIMEOUT', 15))
             
-            # Try both internal and external URIs
-            for uri_name, uri in [("Internal", primary_uri), ("External", fallback_uri)]:
-                if not uri:
-                    continue
-                    
-                app.logger.info(f"Trying {uri_name} MongoDB connection...")
-                
-                # Create MongoDB connection options
-                mongo_options = {
-                    'serverSelectionTimeoutMS': timeout * 1000,
-                    'connectTimeoutMS': timeout * 1000,
-                    'socketTimeoutMS': timeout * 2000
-                }
-                
-                # Close previous client if it exists
-                if mongo_client:
-                    try:
-                        mongo_client.close()
-                    except:
-                        pass
-                
-                # Try to connect with these settings
-                try:
-                    # Create a new client with proper timeouts
-                    mongo_client = MongoClient(
-                        uri,
-                        **mongo_options
-                    )
-                    
-                    # Test connection with ping
-                    db = mongo_client.get_database()
-                    db.command('ping')
-                    
-                    mongo_connected = True
-                    app.logger.info(f"Successfully connected to MongoDB using {uri_name} connection!")
-                    
-                    # Create indexes when connected
-                    try:
-                        db.users.create_index("username", unique=True)
-                        db.payments.create_index("checkout_id", unique=True)
-                        db.transactions.create_index([("username", 1), ("timestamp", -1)])
-                        app.logger.info("MongoDB indexes created successfully")
-                    except Exception as e:
-                        app.logger.error(f"Error creating MongoDB indexes: {e}")
-                        
-                    # Sync in-memory data to MongoDB
-                    sync_memory_to_mongo(app)
-                    
-                    # We've successfully connected, no need to try the fallback
-                    break
-                    
-                except Exception as e:
-                    app.logger.warning(f"MongoDB {uri_name} connection failed: {str(e)}")
-                    mongo_connected = False
+            app.logger.info(f"Trying MongoDB Atlas connection...")
             
-            # If we're still not connected after trying both URIs, wait and retry
-            if not mongo_connected:
-                app.logger.warning(f"All MongoDB connection attempts failed, retrying in {retry_delay} seconds...")
-                time.sleep(retry_delay)
-            else:
-                # We're connected, break out of the retry loop
+            # Create MongoDB connection options
+            mongo_options = {
+                'serverSelectionTimeoutMS': timeout * 1000,
+                'connectTimeoutMS': timeout * 1000,
+                'socketTimeoutMS': timeout * 2000
+            }
+            
+            # Close previous client if it exists
+            if mongo_client:
+                try:
+                    mongo_client.close()
+                except:
+                    pass
+            
+            # Try to connect with these settings
+            try:
+                # Create a new client with proper timeouts
+                mongo_client = MongoClient(
+                    mongo_uri,
+                    **mongo_options
+                )
+                
+                # Test connection with ping
+                db = mongo_client.get_database()
+                db.command('ping')
+                
+                mongo_connected = True
+                app.logger.info(f"Successfully connected to MongoDB Atlas!")
+                
+                # Create indexes when connected
+                try:
+                    db.users.create_index("username", unique=True)
+                    db.payments.create_index("checkout_id", unique=True)
+                    db.transactions.create_index([("username", 1), ("timestamp", -1)])
+                    app.logger.info("MongoDB indexes created successfully")
+                except Exception as e:
+                    app.logger.error(f"Error creating MongoDB indexes: {e}")
+                    
+                # Sync in-memory data to MongoDB
+                sync_memory_to_mongo(app)
+                
+                # We've successfully connected
                 break
+                
+            except Exception as e:
+                app.logger.warning(f"MongoDB Atlas connection failed: {str(e)}")
+                mongo_connected = False
+            
+            # If we're not connected, wait and retry
+            if not mongo_connected:
+                app.logger.warning(f"MongoDB Atlas connection failed, retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
                 
         except Exception as e:
             app.logger.error(f"Unexpected error in MongoDB reconnection thread: {str(e)}")
@@ -186,45 +177,23 @@ def init_mongo(app):
     """Initialize MongoDB connection with retry logic"""
     global mongo_connected, mongo_retry_thread, mongo_client
     
-    # Make sure we have MongoDB URIs - prefer environment variables over app config
-    primary_uri = os.environ.get('MONGO_URI', app.config.get('MONGO_URI'))
-    fallback_uri = os.environ.get('MONGO_EXTERNAL_URI')
+    # Get MongoDB URI from environment or app config
+    mongo_uri = os.environ.get('MONGO_URI', app.config.get('MONGO_URI'))
     timeout = int(os.environ.get('MONGO_TIMEOUT', 15))
     dbname = os.environ.get('MONGO_DBNAME', 'lipia')
     
-    # Ensure the URIs have authSource=admin and the database name
-    for uri_name, uri in [("Primary", primary_uri), ("Fallback", fallback_uri)]:
-        if not uri:
-            continue
-            
-        # Make sure we have the database name in the URI
-        if f'/{dbname}' not in uri:
-            if '?' in uri:
-                uri = uri.replace('?', f'/{dbname}?')
-            else:
-                uri = f"{uri}/{dbname}"
-        
-        # Make sure we have authSource=admin
-        if 'authSource=' not in uri:
-            if '?' in uri:
-                uri = f"{uri}&authSource=admin"
-            else:
-                uri = f"{uri}?authSource=admin"
-                
-        # Update the URIs
-        if uri_name == "Primary":
-            primary_uri = uri
-        else:
-            fallback_uri = uri
+    # Ensure the URI has the database name
+    if f'/{dbname}' not in mongo_uri and '?' in mongo_uri:
+        mongo_uri = mongo_uri.replace('?', f'/{dbname}?')
+    elif f'/{dbname}' not in mongo_uri:
+        mongo_uri = f"{mongo_uri}/{dbname}"
     
-    # Update environment variables and app config with fixed URIs
-    os.environ['MONGO_URI'] = primary_uri
-    os.environ['MONGO_EXTERNAL_URI'] = fallback_uri if fallback_uri else ""
-    app.config['MONGO_URI'] = primary_uri
+    # Update app config with the URI
+    app.config['MONGO_URI'] = mongo_uri
     
-    app.logger.info(f"MongoDB Primary URI: {primary_uri.replace(':tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@', ':***@')}")
-    if fallback_uri:
-        app.logger.info(f"MongoDB Fallback URI: {fallback_uri.replace(':tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@', ':***@')}")
+    # Mask password for logging
+    masked_uri = mongo_uri.replace("Andikar_25", "***")
+    app.logger.info(f"MongoDB URI: {masked_uri}")
     
     # Set MongoDB connection options for Flask-PyMongo
     app.config['MONGO_OPTIONS'] = {
@@ -233,57 +202,50 @@ def init_mongo(app):
         'socketTimeoutMS': timeout * 2000
     }
     
-    # Try direct connections to both URIs in order
+    # Try direct connection to MongoDB Atlas
     try:
-        for uri_name, uri in [("Primary", primary_uri), ("Fallback", fallback_uri)]:
-            if not uri:
-                continue
-                
-            app.logger.info(f"Testing direct connection to {uri_name} MongoDB URI...")
+        app.logger.info(f"Testing direct connection to MongoDB Atlas...")
+        
+        # Create MongoDB connection options
+        mongo_options = {
+            'serverSelectionTimeoutMS': timeout * 1000,
+            'connectTimeoutMS': timeout * 1000,
+            'socketTimeoutMS': timeout * 2000
+        }
+        
+        try:
+            # Create a direct connection with timeout
+            client = MongoClient(
+                mongo_uri,
+                **mongo_options
+            )
             
-            # Create MongoDB connection options
-            mongo_options = {
-                'serverSelectionTimeoutMS': timeout * 1000,
-                'connectTimeoutMS': timeout * 1000,
-                'socketTimeoutMS': timeout * 2000
-            }
+            # Test connection with ping
+            db = client.get_database()
+            db.command('ping')
             
+            # Store the client for reuse
+            mongo_client = client
+            mongo_connected = True
+            
+            app.logger.info(f"MongoDB Atlas connection test successful!")
+            
+            # Create indexes
             try:
-                # Create a direct connection with timeout
-                client = MongoClient(
-                    uri,
-                    **mongo_options
-                )
-                
-                # Test connection with ping
-                db = client.get_database()
-                db.command('ping')
-                
-                # Store the client for reuse
-                mongo_client = client
-                mongo_connected = True
-                
-                app.logger.info(f"MongoDB {uri_name} connection test successful!")
-                
-                # Create indexes
-                try:
-                    db.users.create_index("username", unique=True)
-                    db.payments.create_index("checkout_id", unique=True)
-                    db.transactions.create_index([("username", 1), ("timestamp", -1)])
-                    app.logger.info("MongoDB indexes created successfully")
-                except Exception as e:
-                    app.logger.error(f"Error creating MongoDB indexes: {e}")
-                
-                # We've successfully connected, no need to try the fallback
-                break
-                
+                db.users.create_index("username", unique=True)
+                db.payments.create_index("checkout_id", unique=True)
+                db.transactions.create_index([("username", 1), ("timestamp", -1)])
+                app.logger.info("MongoDB indexes created successfully")
             except Exception as e:
-                app.logger.warning(f"MongoDB {uri_name} direct connection test failed: {str(e)}")
-                mongo_connected = False
-                
-        # If no direct connection worked, log warning and use in-memory
+                app.logger.error(f"Error creating MongoDB indexes: {e}")
+            
+        except Exception as e:
+            app.logger.warning(f"MongoDB Atlas direct connection test failed: {str(e)}")
+            mongo_connected = False
+            
+        # If connection failed, log warning and use in-memory
         if not mongo_connected:
-            app.logger.warning("All MongoDB connection attempts failed")
+            app.logger.warning("MongoDB Atlas connection failed")
             if os.environ.get('MONGO_FALLBACK_TO_MEMORY', 'true').lower() == 'true':
                 app.logger.warning("Starting with in-memory database as fallback")
             else:
@@ -295,13 +257,12 @@ def init_mongo(app):
         if os.environ.get('MONGO_FALLBACK_TO_MEMORY', 'true').lower() != 'true':
             raise
     
-    # Initialize Flask-PyMongo with the primary URI
-    # This is used by some Flask extensions, but we'll use our direct client for actual operations
+    # Initialize Flask-PyMongo with the URI
     mongo.init_app(app)
     
     # Start background thread to retry connection if not connected
     if not mongo_connected and os.environ.get('MONGO_FALLBACK_TO_MEMORY', 'true').lower() == 'true':
-        app.logger.info("Will attempt to reconnect to MongoDB in background")
+        app.logger.info("Will attempt to reconnect to MongoDB Atlas in background")
         
         if not mongo_retry_thread or not mongo_retry_thread.is_alive():
             mongo_retry_thread = threading.Thread(
