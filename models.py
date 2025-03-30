@@ -4,6 +4,7 @@ from datetime import datetime
 import logging
 import time
 import threading
+import signal
 
 # MongoDB connection
 mongo = PyMongo()
@@ -14,32 +15,44 @@ mongo_retry_thread = None
 users_db = {}
 transactions_db = []
 
+# Set a signal handler for timeouts
+def timeout_handler(signum, frame):
+    raise TimeoutError("MongoDB connection timed out")
+
 def retry_mongo_connection(app):
     """Background thread to retry MongoDB connection"""
     global mongo_connected
     while not mongo_connected:
         try:
             app.logger.info("Attempting to reconnect to MongoDB...")
-            # Test connection
-            mongo.db.command('ping')
-            mongo_connected = True
-            app.logger.info("Successfully reconnected to MongoDB!")
-            
-            # Create indexes when connected
+            # Test connection with a short timeout
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(3)  # 3-second timeout
             try:
-                mongo.db.users.create_index("username", unique=True)
-                mongo.db.payments.create_index("checkout_id", unique=True)
-                mongo.db.transactions.create_index([("username", 1), ("timestamp", -1)])
-                app.logger.info("MongoDB indexes created successfully")
-            except Exception as e:
-                app.logger.error(f"Error creating MongoDB indexes: {e}")
+                mongo.db.command('ping')
+                mongo_connected = True
+                app.logger.info("Successfully reconnected to MongoDB!")
                 
-            # Sync in-memory data to MongoDB
-            sync_memory_to_mongo(app)
+                # Create indexes when connected
+                try:
+                    mongo.db.users.create_index("username", unique=True)
+                    mongo.db.payments.create_index("checkout_id", unique=True)
+                    mongo.db.transactions.create_index([("username", 1), ("timestamp", -1)])
+                    app.logger.info("MongoDB indexes created successfully")
+                except Exception as e:
+                    app.logger.error(f"Error creating MongoDB indexes: {e}")
+                    
+                # Sync in-memory data to MongoDB
+                sync_memory_to_mongo(app)
+            except Exception as e:
+                app.logger.warning(f"MongoDB ping failed: {e}")
+            finally:
+                signal.alarm(0)  # Disable alarm
         except Exception as e:
             app.logger.warning(f"MongoDB reconnection failed: {e}")
-            # Wait before trying again
-            time.sleep(10)
+            
+        # Wait before trying again
+        time.sleep(10)
 
 def sync_memory_to_mongo(app):
     """Sync in-memory database to MongoDB when connection is restored"""
@@ -119,37 +132,64 @@ def init_mongo(app):
     global mongo_connected, mongo_retry_thread
     
     try:
+        # Use the external MongoDB URL instead of internal
+        if 'MONGO_URI' in app.config:
+            # Check if we're using internal URL
+            if 'mongodb.railway.internal' in app.config['MONGO_URI']:
+                # Switch to external URL
+                app.config['MONGO_URI'] = app.config.get('MONGO_PUBLIC_URL', 
+                    'mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@metro.proxy.rlwy.net:52335/lipia')
+                app.logger.info(f"Using MongoDB external URL: {app.config['MONGO_URI']}")
+        
         # Set shorter connection timeouts
         app.config['MONGO_OPTIONS'] = {
-            'serverSelectionTimeoutMS': 5000,  # 5 seconds for server selection
-            'connectTimeoutMS': 5000,          # 5 seconds for connection
-            'socketTimeoutMS': 10000           # 10 seconds for socket operations
+            'serverSelectionTimeoutMS': 3000,  # 3 seconds for server selection
+            'connectTimeoutMS': 3000,          # 3 seconds for connection
+            'socketTimeoutMS': 5000            # 5 seconds for socket operations
         }
         
         # Initialize MongoDB connection
         mongo.init_app(app)
         app.logger.info("Testing MongoDB connection...")
         
-        # Test connection
-        mongo.db.command('ping')
-        mongo_connected = True
-        app.logger.info("MongoDB connected successfully!")
+        # Test connection with a short timeout
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(3)  # 3-second timeout
         
-        # Create indexes
         try:
-            mongo.db.users.create_index("username", unique=True)
-            mongo.db.payments.create_index("checkout_id", unique=True)
-            mongo.db.transactions.create_index([("username", 1), ("timestamp", -1)])
-            app.logger.info("MongoDB indexes created successfully")
+            # Test connection
+            mongo.db.command('ping')
+            mongo_connected = True
+            app.logger.info("MongoDB connected successfully!")
+            
+            # Create indexes
+            try:
+                mongo.db.users.create_index("username", unique=True)
+                mongo.db.payments.create_index("checkout_id", unique=True)
+                mongo.db.transactions.create_index([("username", 1), ("timestamp", -1)])
+                app.logger.info("MongoDB indexes created successfully")
+            except Exception as e:
+                app.logger.error(f"Error creating MongoDB indexes: {e}")
         except Exception as e:
-            app.logger.error(f"Error creating MongoDB indexes: {e}")
+            app.logger.error(f"MongoDB ping failed: {e}")
+            mongo_connected = False
+        finally:
+            signal.alarm(0)  # Disable alarm
             
     except (ConnectionFailure, ServerSelectionTimeoutError) as e:
         app.logger.error(f"MongoDB connection failed: {e}")
         app.logger.warning("Starting with in-memory database as fallback")
+        mongo_connected = False
+        
+    except Exception as e:
+        app.logger.error(f"Unexpected error initializing MongoDB: {e}")
+        app.logger.warning("Starting with in-memory database only")
+        mongo_connected = False
+    
+    # Start background thread to retry connection if not connected
+    if not mongo_connected:
         app.logger.info("Will attempt to reconnect to MongoDB in background")
         
-        # Start background thread to retry connection
         if not mongo_retry_thread or not mongo_retry_thread.is_alive():
             mongo_retry_thread = threading.Thread(
                 target=retry_mongo_connection, 
@@ -157,10 +197,6 @@ def init_mongo(app):
                 daemon=True
             )
             mongo_retry_thread.start()
-            
-    except Exception as e:
-        app.logger.error(f"Unexpected error initializing MongoDB: {e}")
-        app.logger.warning("Starting with in-memory database only")
     
     return mongo
 
