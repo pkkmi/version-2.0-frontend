@@ -10,7 +10,7 @@ logger = logging.getLogger("mongodb")
 
 # Connection details for MongoDB Atlas
 MONGO_USER = os.environ.get('MONGO_USER', 'edgarmaina003')
-MONGO_PASSWORD = os.environ.get('MONGO_PASSWORD', '<db_password>')
+MONGO_PASSWORD = os.environ.get('MONGO_PASSWORD', 'Andikar_25')
 MONGO_DBNAME = os.environ.get('MONGO_DBNAME', 'lipia')
 
 # MongoDB Atlas connection string
