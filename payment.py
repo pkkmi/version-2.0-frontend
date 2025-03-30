@@ -1,3 +1,6 @@
+# Updated payment.py with Lipia payment functionality
+
+from flask import Blueprint, request, jsonify, current_app, url_for, render_template, flash, redirect, session
 import os
 import requests
 import json
@@ -5,15 +8,15 @@ import uuid
 import queue
 import threading
 import socket
+import time
 from datetime import datetime
-from flask import Blueprint, request, jsonify, current_app, url_for, render_template, flash, redirect, session
 from models import get_user, update_word_count, record_payment, save_transaction, get_transaction, update_transaction_status
 from config import pricing_plans
 
 # Initialize payment blueprint
 payment_bp = Blueprint('payment', __name__, url_prefix='/payment')
 
-# API constants - use the real credentials
+# API constants - use the real credentials from Python script
 API_BASE_URL = os.environ.get('LIPIA_API_URL', "https://lipia-api.kreativelabske.com/api")
 API_KEY = os.environ.get('LIPIA_API_KEY', "7c8a3202ae14857e71e3a9db78cf62139772cae6")
 PAYMENT_URL = os.environ.get('PAYMENT_URL', "https://lipia-online.vercel.app/link/andikartill")
@@ -22,7 +25,13 @@ PAYMENT_URL = os.environ.get('PAYMENT_URL', "https://lipia-online.vercel.app/lin
 CALLBACK_QUEUE = queue.Queue()
 ACTIVE_TRANSACTIONS = {}
 
-# Format phone number for API
+# Callback server setup
+CALLBACK_HOST = "0.0.0.0"  # Listen on all interfaces
+CALLBACK_PORT = int(os.environ.get('CALLBACK_PORT', 8000))
+callback_server = None
+callback_thread = None
+
+# Format phone number for API (same as in Python script)
 def format_phone_for_api(phone):
     """Format phone number to 07XXXXXXXX format required by API"""
     # Ensure phone is a string
@@ -47,6 +56,80 @@ def format_phone_for_api(phone):
 
     current_app.logger.debug(f"Original phone: {phone} -> Formatted for API: {phone}")
     return phone
+
+# Import socket and HTTPServer for callback server
+try:
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+except ImportError:
+    current_app.logger.error("Failed to import HTTPServer. Callbacks may not work.")
+
+# Callback server handler
+class CallbackHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        # Override to use Flask logger
+        if hasattr(current_app, 'logger'):
+            current_app.logger.info(format % args)
+        else:
+            BaseHTTPRequestHandler.log_message(self, format, *args)
+    
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b'Lipia Callback Server')
+
+    def do_POST(self):
+        try:
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            
+            # Parse the JSON data from the callback
+            callback_data = json.loads(post_data.decode('utf-8'))
+            if hasattr(current_app, 'logger'):
+                current_app.logger.info(f"Received payment callback: {callback_data}")
+            
+            # Put in queue for processing
+            CALLBACK_QUEUE.put(callback_data)
+            
+            # Send response
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "success"}).encode())
+            
+        except Exception as e:
+            if hasattr(current_app, 'logger'):
+                current_app.logger.error(f"Error in callback handler: {e}")
+            self.send_response(400)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode())
+
+# Start callback server in a separate thread
+def run_callback_server(host, port):
+    try:
+        server = HTTPServer((host, port), CallbackHandler)
+        if hasattr(current_app, 'logger'):
+            current_app.logger.info(f"Starting callback server on {host}:{port}")
+        server.serve_forever()
+    except Exception as e:
+        if hasattr(current_app, 'logger'):
+            current_app.logger.error(f"Error starting callback server: {e}")
+
+# Find an available port for the callback server
+def find_available_port(start_port=8000, end_port=9000):
+    global CALLBACK_PORT
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    for port in range(start_port, end_port):
+        try:
+            s.bind((CALLBACK_HOST, port))
+            s.close()
+            CALLBACK_PORT = port
+            return port
+        except Exception:
+            continue
+    s.close()
+    return None
 
 # Process callback data
 def process_payment_callback(callback_data):
@@ -82,8 +165,11 @@ def process_payment_callback(callback_data):
             checkout_id
         )
 
-        # Update word count
-        words_to_add = pricing_plans.get(subscription_type, {}).get('word_limit', 0)
+        # Update word count based on subscription type (same as Python script)
+        words_to_add = 100 if subscription_type == 'basic' else 1000
+        if subscription_type in pricing_plans:
+            words_to_add = pricing_plans[subscription_type]['word_limit']
+        
         new_word_count = update_word_count(username, words_to_add)
 
         # Update ACTIVE_TRANSACTIONS
@@ -95,7 +181,7 @@ def process_payment_callback(callback_data):
         current_app.logger.error(f"Error processing callback: {e}")
         return False
 
-# Function to check queue for callbacks
+# Function to check queue for callbacks - called periodically
 def check_callbacks():
     """Check for queued callbacks"""
     try:
@@ -105,10 +191,32 @@ def check_callbacks():
     except Exception as e:
         current_app.logger.error(f"Error in check_callbacks: {e}")
 
+# Initialize callback server
+def init_callback_server():
+    global callback_server, callback_thread, CALLBACK_PORT
+    
+    # Find available port
+    port = find_available_port()
+    if not port:
+        current_app.logger.error("Could not find available port for callback server")
+        return False
+    
+    current_app.logger.info(f"Starting callback server on port {port}")
+    
+    # Start server in a thread
+    callback_thread = threading.Thread(
+        target=run_callback_server, 
+        args=(CALLBACK_HOST, port),
+        daemon=True
+    )
+    callback_thread.start()
+    
+    return True
+
 # Routes
 @payment_bp.route('/initiate', methods=['POST'])
 def initiate_payment():
-    """Initiate payment process"""
+    """Initiate payment process - Implementation directly from Python script"""
     # Check if request is from our frontend or external API
     if request.is_json:
         data = request.json
@@ -121,17 +229,17 @@ def initiate_payment():
         }
     
     username = data.get('username')
-    subscription_type = data.get('subscription_type')
+    subscription_type = data.get('subscription_type').lower()  # Convert to lowercase to match Python script
     phone_override = data.get('phone_number')
     
     if not username or not subscription_type:
         return jsonify({"error": "Missing required parameters"}), 400
     
     # Get plan details
-    if subscription_type not in pricing_plans:
+    if subscription_type.capitalize() not in pricing_plans:
         return jsonify({"error": "Invalid subscription type"}), 400
     
-    amount = pricing_plans[subscription_type]['price']
+    amount = pricing_plans[subscription_type.capitalize()]['price']
     
     # Get user data
     try:
@@ -156,7 +264,7 @@ def initiate_payment():
     
     try:
         # If this is the Free plan, process it immediately
-        if subscription_type == 'Free' or amount == 0:
+        if subscription_type.capitalize() == 'Free' or amount == 0:
             # Generate a transaction ID
             checkout_id = f"FREE-{uuid.uuid4()}"
             
@@ -189,7 +297,7 @@ def initiate_payment():
             update_user(username, {'payment_status': 'Paid'})
             
             # Update word count
-            words_to_add = pricing_plans[subscription_type]['word_limit']
+            words_to_add = pricing_plans[subscription_type.capitalize()]['word_limit']
             new_word_count = update_word_count(username, words_to_add)
             
             return jsonify({
@@ -267,8 +375,8 @@ def initiate_payment():
                     from models import update_user
                     update_user(username, {'payment_status': 'Paid'})
                     
-                    # Update word count
-                    words_to_add = pricing_plans[subscription_type]['word_limit']
+                    # Update word count - modified to match Python script logic
+                    words_to_add = 100 if subscription_type == 'basic' else 1000
                     new_word_count = update_word_count(username, words_to_add)
                     
                     return jsonify({
@@ -357,7 +465,7 @@ def initiate_payment():
             update_user(username, {'payment_status': 'Paid'})
             
             # Update word count
-            words_to_add = pricing_plans[subscription_type]['word_limit']
+            words_to_add = 100 if subscription_type == 'basic' else 1000
             new_word_count = update_word_count(username, words_to_add)
             
             return jsonify({
@@ -438,7 +546,8 @@ def payment_callback():
         
         # Update word count
         try:
-            words_to_add = pricing_plans.get(subscription_type, {}).get('word_limit', 0)
+            # Modified to match Python script logic
+            words_to_add = 100 if subscription_type == 'basic' else 1000
             new_word_count = update_word_count(username, words_to_add)
             current_app.logger.info(f"Payment callback processed for {username}, {words_to_add} words added")
         except Exception as e:
@@ -543,3 +652,6 @@ def cancel_payment(checkout_id):
     except Exception as e:
         current_app.logger.error(f"Error cancelling payment: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
+
+# Start the callback server when this module is imported
+init_callback_server()

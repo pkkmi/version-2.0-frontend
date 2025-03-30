@@ -1,7 +1,7 @@
 # App name
 APP_NAME = "Andikar AI"
 
-# Pricing plans
+# Pricing plans - Updated to match Python script
 pricing_plans = {
     "Free": {
         "price": 0,  # USD
@@ -10,12 +10,12 @@ pricing_plans = {
     },
     "Basic": {
         "price": 20,  # USD
-        "word_limit": 1500,
-        "description": "Basic plan with 1,500 words per round"
+        "word_limit": 100,  # Match Python script - 100 words for $20
+        "description": "Basic plan with 100 words"
     },
     "Premium": {
-        "price": 30,  # USD
-        "word_limit": 8000,
-        "description": "Premium plan with 8,000 words per round"
+        "price": 50,  # USD
+        "word_limit": 1000,  # Match Python script - 1000 words for $50
+        "description": "Premium plan with 1,000 words"
     }
 }
