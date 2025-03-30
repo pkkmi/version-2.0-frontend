@@ -48,24 +48,6 @@ def format_phone_for_api(phone):
     current_app.logger.debug(f"Original phone: {phone} -> Formatted for API: {phone}")
     return phone
 
-# Find an available port for the callback server
-def find_available_port():
-    """Find an available port for the callback server"""
-    default_port = 8000
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        for port in range(default_port, default_port + 1000):
-            try:
-                s.bind(('localhost', port))
-                s.close()
-                return port
-            except:
-                continue
-        s.close()
-    except Exception as e:
-        current_app.logger.error(f"Error finding available port: {e}")
-    return default_port
-
 # Process callback data
 def process_payment_callback(callback_data):
     """Process payment callback data"""
@@ -173,6 +155,53 @@ def initiate_payment():
     formatted_phone = format_phone_for_api(phone)
     
     try:
+        # If this is the Free plan, process it immediately
+        if subscription_type == 'Free' or amount == 0:
+            # Generate a transaction ID
+            checkout_id = f"FREE-{uuid.uuid4()}"
+            
+            # Save transaction data
+            transaction_data = {
+                'checkout_id': checkout_id,
+                'username': username,
+                'amount': 0,
+                'phone': phone,
+                'subscription_type': subscription_type,
+                'timestamp': datetime.now(),
+                'status': 'completed',
+                'reference': f"FREE-PLAN-{checkout_id[:8]}"
+            }
+            
+            save_transaction(checkout_id, transaction_data)
+            
+            # Record payment
+            record_payment(
+                username,
+                0,
+                subscription_type,
+                'completed',
+                transaction_data['reference'],
+                checkout_id
+            )
+            
+            # Update user status
+            from models import update_user
+            update_user(username, {'payment_status': 'Paid'})
+            
+            # Update word count
+            words_to_add = pricing_plans[subscription_type]['word_limit']
+            new_word_count = update_word_count(username, words_to_add)
+            
+            return jsonify({
+                "status": "success",
+                "message": "Free plan activated successfully",
+                "checkout_id": checkout_id,
+                "reference": transaction_data['reference'],
+                "words_added": words_to_add,
+                "new_word_count": new_word_count
+            }), 200
+        
+        # For paid plans, proceed with payment API
         # Prepare API request
         headers = {
             'Authorization': f'Bearer {API_KEY}',
@@ -234,13 +263,17 @@ def initiate_payment():
                         checkout_id
                     )
                     
+                    # Update user status
+                    from models import update_user
+                    update_user(username, {'payment_status': 'Paid'})
+                    
                     # Update word count
                     words_to_add = pricing_plans[subscription_type]['word_limit']
                     new_word_count = update_word_count(username, words_to_add)
                     
                     return jsonify({
                         "status": "success",
-                        "message": "Payment processed successfully (API)",
+                        "message": "Payment processed successfully",
                         "checkout_id": checkout_id,
                         "reference": reference,
                         "words_added": words_to_add,
@@ -304,7 +337,7 @@ def initiate_payment():
                 'subscription_type': subscription_type,
                 'timestamp': datetime.now(),
                 'status': 'completed',
-                'reference': f"REF-MANUAL-{checkout_id[:8]}"
+                'reference': f"MANUAL-{checkout_id[:8]}"
             }
             
             save_transaction(checkout_id, transaction_data)
@@ -319,13 +352,17 @@ def initiate_payment():
                 checkout_id
             )
             
+            # Update user status
+            from models import update_user
+            update_user(username, {'payment_status': 'Paid'})
+            
             # Update word count
             words_to_add = pricing_plans[subscription_type]['word_limit']
             new_word_count = update_word_count(username, words_to_add)
             
             return jsonify({
                 "status": "success",
-                "message": "Payment processed successfully (manual fallback)",
+                "message": "Payment processed successfully (manual processing)",
                 "checkout_id": checkout_id,
                 "reference": transaction_data['reference'],
                 "words_added": words_to_add,
@@ -390,6 +427,14 @@ def payment_callback():
         except Exception as e:
             current_app.logger.error(f"Error recording payment: {e}")
             # Continue even if record fails
+        
+        # Update user status
+        try:
+            from models import update_user
+            update_user(username, {'payment_status': 'Paid'})
+        except Exception as e:
+            current_app.logger.error(f"Error updating user status: {e}")
+            # Continue even if update fails
         
         # Update word count
         try:
