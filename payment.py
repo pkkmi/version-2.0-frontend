@@ -10,9 +10,10 @@ from config import pricing_plans
 # Initialize payment blueprint
 payment_bp = Blueprint('payment', __name__, url_prefix='/payment')
 
-# API constants
-API_BASE_URL = os.environ.get("LIPIA_API_URL", "https://lipia-api.kreativelabske.com/api")
-API_KEY = os.environ.get("LIPIA_API_KEY", "7c8a3202ae14857e71e3a9db78cf62139772cae6")
+# API constants - use the real credentials
+API_BASE_URL = "https://lipia-api.kreativelabske.com/api"
+API_KEY = "7c8a3202ae14857e71e3a9db78cf62139772cae6"
+PAYMENT_URL = "https://lipia-online.vercel.app/link/andikartill"
 
 # Format phone number for API
 def format_phone_for_api(phone):
@@ -73,202 +74,52 @@ def initiate_payment():
     # Format phone number for API
     formatted_phone = format_phone_for_api(phone)
     
-    # Set up callback URL
-    callback_url = url_for('payment.payment_callback', _external=True)
+    # Generate a checkout ID
+    checkout_id = f"MANUAL-{uuid.uuid4()}"
+    
+    # Save transaction data
+    transaction_data = {
+        'checkout_id': checkout_id,
+        'username': username,
+        'amount': amount,
+        'phone': phone,
+        'subscription_type': subscription_type,
+        'timestamp': datetime.now(),
+        'status': 'completed',
+        'reference': f"REF-{checkout_id[:8]}"
+    }
     
     try:
-        # Prepare API request
-        headers = {
-            'Authorization': f'Bearer {API_KEY}',
-            'Content-Type': 'application/json'
-        }
+        save_transaction(checkout_id, transaction_data)
         
-        payload = {
-            'phone': formatted_phone,
-            'amount': str(amount),
-            'callback_url': callback_url
-        }
-        
-        current_app.logger.info(f"Sending payment request with phone: {formatted_phone}, amount: {amount}")
-        
-        # TEMPORARY MANUAL OVERRIDE - Don't actually call API
-        # Just simulate a successful payment
-        
-        # Generate a checkout ID
-        checkout_id = f"MANUAL-{uuid.uuid4()}"
-        
-        # Save transaction data
-        transaction_data = {
-            'checkout_id': checkout_id,
-            'username': username,
-            'amount': amount,
-            'phone': phone,
-            'subscription_type': subscription_type,
-            'timestamp': datetime.now(),
-            'status': 'completed',
-            'reference': f"REF-{checkout_id[:8]}"
-        }
-        
-        try:
-            save_transaction(checkout_id, transaction_data)
-            
-            # Record payment
-            record_payment(
-                username,
-                amount,
-                subscription_type,
-                'completed',
-                transaction_data['reference'],
-                checkout_id
-            )
-            
-            # Update word count
-            words_to_add = pricing_plans[subscription_type]['word_limit']
-            new_word_count = update_word_count(username, words_to_add)
-            
-            return jsonify({
-                "status": "success",
-                "message": "Payment processed successfully (manual mode)",
-                "checkout_id": checkout_id,
-                "reference": transaction_data['reference'],
-                "words_added": words_to_add,
-                "new_word_count": new_word_count
-            }), 200
-            
-        except Exception as e:
-            current_app.logger.error(f"Error processing manual payment: {e}")
-            return jsonify({
-                "status": "error",
-                "message": f"Error processing payment: {str(e)}"
-            }), 500
-        
-        # REAL API CALL - COMMENTED OUT FOR NOW
-        """
-        # Send payment request to API
-        response = requests.post(
-            f"{API_BASE_URL}/request/stk",
-            headers=headers,
-            json=payload,
-            timeout=30  # Timeout after 30 seconds
+        # Record payment
+        record_payment(
+            username,
+            amount,
+            subscription_type,
+            'completed',
+            transaction_data['reference'],
+            checkout_id
         )
         
-        current_app.logger.info(f"API Response: {response.status_code} - {response.text}")
-        
-        # Process response
-        if response.status_code == 200:
-            response_data = response.json()
-            
-            # Check for successful response
-            if response_data.get('message') == 'callback received successfully' and 'data' in response_data:
-                data = response_data['data']
-                checkout_id = data.get('CheckoutRequestID')
-                reference = data.get('refference')  # Note: API uses "refference" with two f's
-                
-                # Save transaction data
-                transaction_data = {
-                    'checkout_id': checkout_id,
-                    'username': username,
-                    'amount': amount,
-                    'phone': phone,
-                    'subscription_type': subscription_type,
-                    'timestamp': datetime.now(),
-                    'status': 'completed',
-                    'reference': reference
-                }
-                save_transaction(checkout_id, transaction_data)
-                
-                # Record completed payment
-                record_payment(
-                    username,
-                    amount,
-                    subscription_type,
-                    'completed',
-                    reference,
-                    checkout_id
-                )
-                
-                # Update word count
-                words_to_add = pricing_plans[subscription_type].get('word_limit', 0)
-                new_word_count = update_word_count(username, words_to_add)
-                
-                return jsonify({
-                    "status": "success",
-                    "message": "Payment processed successfully",
-                    "checkout_id": checkout_id,
-                    "reference": reference,
-                    "words_added": words_to_add,
-                    "new_word_count": new_word_count
-                }), 200
-                
-            elif 'data' in response_data and 'CheckoutRequestID' in response_data['data']:
-                # This is the case where we need to wait for callback
-                checkout_id = response_data['data']['CheckoutRequestID']
-                
-                # Save transaction data
-                transaction_data = {
-                    'checkout_id': checkout_id,
-                    'username': username,
-                    'amount': amount,
-                    'phone': phone,
-                    'subscription_type': subscription_type,
-                    'timestamp': datetime.now(),
-                    'status': 'pending'
-                }
-                save_transaction(checkout_id, transaction_data)
-                
-                # Record pending payment
-                record_payment(
-                    username,
-                    amount,
-                    subscription_type,
-                    'pending',
-                    'N/A',
-                    checkout_id
-                )
-                
-                return jsonify({
-                    "status": "pending",
-                    "message": "Payment request sent to your phone",
-                    "checkout_id": checkout_id
-                }), 202
-            else:
-                # Handle error message from API
-                error_msg = response_data.get('message', 'Unknown error')
-                
-                # Record failed payment
-                record_payment(username, amount, subscription_type, 'failed', 'N/A', str(uuid.uuid4()))
-                
-                return jsonify({
-                    "status": "error",
-                    "message": error_msg
-                }), 400
-        else:
-            # Record failed payment
-            record_payment(username, amount, subscription_type, 'failed', 'N/A', str(uuid.uuid4()))
-            
-            return jsonify({
-                "status": "error",
-                "message": f"Payment API returned status code {response.status_code}"
-            }), 500
-        """
-            
-    except requests.exceptions.Timeout:
-        # Record timeout payment
-        record_payment(username, amount, subscription_type, 'timeout', 'N/A', str(uuid.uuid4()))
+        # Update word count
+        words_to_add = pricing_plans[subscription_type]['word_limit']
+        new_word_count = update_word_count(username, words_to_add)
         
         return jsonify({
-            "status": "error",
-            "message": "Payment request timed out"
-        }), 504
+            "status": "success",
+            "message": "Payment processed successfully (manual mode)",
+            "checkout_id": checkout_id,
+            "reference": transaction_data['reference'],
+            "words_added": words_to_add,
+            "new_word_count": new_word_count
+        }), 200
         
     except Exception as e:
-        # Record error payment
-        record_payment(username, amount, subscription_type, 'error', 'N/A', str(uuid.uuid4()))
-        
-        current_app.logger.error(f"Payment error: {str(e)}")
+        current_app.logger.error(f"Error processing manual payment: {e}")
         return jsonify({
             "status": "error",
-            "message": f"An unexpected error occurred: {str(e)}"
+            "message": f"Error processing payment: {str(e)}"
         }), 500
 
 @payment_bp.route('/callback', methods=['POST'])
@@ -359,7 +210,7 @@ def check_payment_status(checkout_id):
                 "reference": transaction.get('reference', 'N/A'),
                 "amount": transaction.get('amount', 0),
                 "subscription_type": transaction.get('subscription_type', 'unknown'),
-                "timestamp": transaction.get('timestamp', datetime.now()).isoformat()
+                "timestamp": datetime.now().isoformat()
             }
         }), 200
     except Exception as e:
