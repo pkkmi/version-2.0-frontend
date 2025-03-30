@@ -15,29 +15,16 @@ from templates import html_templates
 
 # Initialize Flask app
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(32)))
+# Use a fixed secret key instead of a random one
+app.secret_key = os.environ.get('SECRET_KEY', '2e739f24f823e472c1899f068c1af7c06bc79a91')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = app.logger
+logger.info("Starting application...")
 
-# MongoDB configuration
-try:
-    app.config['MONGO_URI'] = os.environ.get(
-        'MONGO_URL', 
-        'mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@mongodb.railway.internal:27017/lipia'
-    )
-    logger.info(f"Using MongoDB URI: {app.config['MONGO_URI']}")
-except Exception as e:
-    logger.error(f"Error setting MongoDB URI: {e}")
-
-# Initialize MongoDB - but don't fail if it can't connect
-try:
-    mongo = init_mongo(app)
-    logger.info("MongoDB initialized")
-except Exception as e:
-    logger.error(f"MongoDB initialization error: {e}")
-    logger.warning("App will continue with in-memory database only")
+# Initialize storage - no MongoDB, just in-memory
+init_mongo(app)
 
 # Register blueprints
 try:
@@ -69,7 +56,7 @@ def login():
         username = request.form['username']
         password = request.form['password']
 
-        # Check if user exists using MongoDB
+        # Check if user exists
         user = get_user(username)
         
         if user and user.get('pin', '') == password:
@@ -91,30 +78,17 @@ def register():
         
         # Get email and phone from the form
         email = request.form['email']
-        phone = request.form.get('phone', None)  # Phone is optional
+        phone = request.form.get('phone', '0712345678')  # Default phone if not provided
 
-        # Use MongoDB to check if user exists
+        # Check if user exists
         if get_user(username):
             flash('Username already exists', 'error')
         else:
             # Set payment status (Free tier is automatically Paid)
             payment_status = 'Paid' if plan_type == 'Free' else 'Pending'
 
-            # For backwards compatibility during transition
-            users_db[username] = {
-                'password': password,
-                'plan': plan_type,
-                'joined_date': datetime.datetime.now().strftime('%Y-%m-%d'),
-                'words_used': 0,
-                'payment_status': payment_status,
-                'api_keys': {
-                    'gpt_zero': '',
-                    'originality': ''
-                }
-            }
-            
             try:
-                # Create user in MongoDB
+                # Create user
                 from models import create_user
                 create_user(username, password, phone)
                 
@@ -123,10 +97,7 @@ def register():
                 update_user(username, {
                     'plan': plan_type,
                     'payment_status': payment_status,
-                    'api_keys': {
-                        'gpt_zero': '',
-                        'originality': ''
-                    }
+                    'phone_number': phone
                 })
                 
                 # Register the user to the backend API
@@ -158,28 +129,23 @@ def register():
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    # Get user data from MongoDB
+    # Get user data
     user = get_user(session['user_id'])
     if not user:
         flash('User not found', 'error')
         return redirect(url_for('login'))
     
-    # For backwards compatibility
-    if session['user_id'] in users_db:
-        user_data = users_db[session['user_id']]
-    else:
-        user_data = {
-            'plan': user.get('plan', 'Free'),
-            'joined_date': user.get('created_at', datetime.datetime.now()).strftime('%Y-%m-%d'),
-            'words_used': 0,
-            'payment_status': user.get('payment_status', 'Pending'),
-            'api_keys': user.get('api_keys', {
-                'gpt_zero': '',
-                'originality': ''
-            })
-        }
-        # Add to in-memory DB for compatibility
-        users_db[session['user_id']] = user_data
+    # Build user data for template
+    user_data = {
+        'plan': user.get('plan', 'Free'),
+        'joined_date': datetime.datetime.now().strftime('%Y-%m-%d'),
+        'words_used': 0,
+        'payment_status': user.get('payment_status', 'Pending'),
+        'api_keys': user.get('api_keys', {
+            'gpt_zero': '',
+            'originality': ''
+        })
+    }
     
     return render_template_string(html_templates['dashboard.html'], user=user_data,
                                   plan=pricing_plans[user_data['plan']],
@@ -192,7 +158,7 @@ def humanize():
     message = ""
     humanized_text = ""
     
-    # Get user data from MongoDB
+    # Get user data
     user = get_user(session['user_id'])
     if not user:
         flash('User not found', 'error')
@@ -238,7 +204,7 @@ def detect():
     result = None
     message = ""
     
-    # Get user data from MongoDB
+    # Get user data
     user = get_user(session['user_id'])
     if not user:
         flash('User not found', 'error')
@@ -264,57 +230,38 @@ def detect():
 @app.route('/account')
 @login_required
 def account():
-    # Get user data from MongoDB
+    # Get user data
     user = get_user(session['user_id'])
     if not user:
         flash('User not found', 'error')
         return redirect(url_for('login'))
     
-    # For backwards compatibility
-    if session['user_id'] in users_db:
-        user_data = users_db[session['user_id']]
-    else:
-        user_data = {
-            'plan': user.get('plan', 'Free'),
-            'joined_date': user.get('created_at', datetime.datetime.now()).strftime('%Y-%m-%d'),
-            'words_used': 0,
-            'payment_status': user.get('payment_status', 'Pending'),
-            'api_keys': user.get('api_keys', {
-                'gpt_zero': '',
-                'originality': ''
-            })
-        }
-    
-    # Get user transactions from MongoDB
-    user_transactions = get_user_payments(session['user_id'])
-    
-    # Convert to format expected by template
-    formatted_transactions = []
-    for t in user_transactions:
-        formatted_transactions.append({
-            'transaction_id': t.get('checkout_id', 'N/A'),
-            'user_id': t.get('username'),
-            'phone_number': user.get('phone_number', 'N/A'),
-            'amount': t.get('amount', 0),
-            'date': t.get('timestamp', datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S'),
-            'status': t.get('status', 'Unknown')
+    # Build user data for template
+    user_data = {
+        'plan': user.get('plan', 'Free'),
+        'joined_date': datetime.datetime.now().strftime('%Y-%m-%d'),
+        'words_used': 0,
+        'payment_status': user.get('payment_status', 'Pending'),
+        'api_keys': user.get('api_keys', {
+            'gpt_zero': '',
+            'originality': ''
         })
+    }
     
-    # If no transactions in MongoDB, use in-memory DB for now
-    if not formatted_transactions:
-        formatted_transactions = [t for t in transactions_db if t['user_id'] == session['user_id']]
+    # Get user transactions
+    user_transactions = get_user_payments(session['user_id'])
     
     return render_template_string(html_templates['account.html'], 
                                   user=user_data, 
                                   plan=pricing_plans[user_data['plan']],
-                                  transactions=formatted_transactions,
+                                  transactions=user_transactions,
                                   words_remaining=user.get('words_remaining', 0))
 
 
 @app.route('/api-integration', methods=['GET', 'POST'])
 @login_required
 def api_integration():
-    # Get user data from MongoDB
+    # Get user data
     user = get_user(session['user_id'])
     if not user:
         flash('User not found', 'error')
@@ -329,7 +276,7 @@ def api_integration():
         gpt_zero_key = request.form.get('gpt_zero_key', '')
         originality_key = request.form.get('originality_key', '')
 
-        # Update API keys in MongoDB
+        # Update API keys
         from models import update_user
         update_user(session['user_id'], {
             'api_keys': {
@@ -338,11 +285,6 @@ def api_integration():
             }
         })
         
-        # For backwards compatibility
-        if session['user_id'] in users_db:
-            users_db[session['user_id']]['api_keys']['gpt_zero'] = gpt_zero_key
-            users_db[session['user_id']]['api_keys']['originality'] = originality_key
-
         flash('API keys updated successfully!', 'success')
         return redirect(url_for('api_integration'))
 
@@ -374,7 +316,7 @@ def pricing():
 @app.route('/payment', methods=['GET', 'POST'])
 @login_required
 def payment():
-    # Get user data from MongoDB
+    # Get user data
     user = get_user(session['user_id'])
     if not user:
         flash('User not found', 'error')
@@ -417,13 +359,14 @@ def payment():
             flash(f"Payment error: {str(e)}", 'error')
 
     return render_template_string(html_templates['payment.html'],
-                                  plan=pricing_plans[user.get('plan', 'Free')])
+                                  plan=pricing_plans[user.get('plan', 'Free')],
+                                  payment_url="https://lipia-online.vercel.app/link/andikartill")
 
 
 @app.route('/upgrade', methods=['GET', 'POST'])
 @login_required
 def upgrade():
-    # Get user data from MongoDB
+    # Get user data
     user = get_user(session['user_id'])
     if not user:
         flash('User not found', 'error')
@@ -434,17 +377,12 @@ def upgrade():
     if request.method == 'POST':
         new_plan = request.form['new_plan']
         
-        # Update plan in MongoDB
+        # Update plan
         from models import update_user
         update_user(session['user_id'], {
             'plan': new_plan,
             'payment_status': 'Pending'
         })
-        
-        # For backwards compatibility
-        if session['user_id'] in users_db:
-            users_db[session['user_id']]['plan'] = new_plan
-            users_db[session['user_id']]['payment_status'] = 'Pending'
         
         flash(f'Your plan has been upgraded to {new_plan}. Please make payment to activate.', 'success')
         return redirect(url_for('payment'))
@@ -480,7 +418,8 @@ def api_test():
     sample_text = "This is a test of the Andikar humanizer API connection."
     results = {
         "api_url": api_url,
-        "tests": []
+        "tests": [],
+        "storage": "In-memory database (MongoDB disabled)"
     }
     
     # Test 1: Check the root endpoint
@@ -499,71 +438,6 @@ def api_test():
             "error": str(e)
         })
         
-    # Test 2: Check the echo endpoint
-    try:
-        response = requests.post(f"{api_url}/echo_text", json={"input_text": sample_text}, timeout=5)
-        results["tests"].append({
-            "name": "Echo endpoint",
-            "success": response.status_code == 200,
-            "status": response.status_code,
-            "response": response.json() if response.status_code == 200 else response.text[:100]
-        })
-    except Exception as e:
-        results["tests"].append({
-            "name": "Echo endpoint",
-            "success": False,
-            "error": str(e)
-        })
-        
-    # Test 3: Check the humanize endpoint
-    try:
-        response = requests.post(f"{api_url}/humanize_text", json={"input_text": sample_text}, timeout=15)
-        results["tests"].append({
-            "name": "Humanize endpoint",
-            "success": response.status_code == 200,
-            "status": response.status_code,
-            "response": response.json() if response.status_code == 200 else response.text[:100]
-        })
-    except Exception as e:
-        results["tests"].append({
-            "name": "Humanize endpoint",
-            "success": False,
-            "error": str(e)
-        })
-        
-    # Test 4: Check the admin API registration endpoint
-    admin_api_url = os.environ.get("ADMIN_API_URL", "https://railway-test-api-production.up.railway.app")
-    try:
-        # Just check if the endpoint is reachable, don't actually register
-        response = requests.get(f"{admin_api_url}/", timeout=5)
-        results["tests"].append({
-            "name": "Admin API root endpoint",
-            "success": response.status_code == 200,
-            "status": response.status_code,
-            "content_type": response.headers.get('content-type', 'Unknown')
-        })
-    except Exception as e:
-        results["tests"].append({
-            "name": "Admin API root endpoint",
-            "success": False,
-            "error": str(e)
-        })
-    
-    # Test 5: MongoDB connection
-    try:
-        mongo_status = "Connected" if mongo.db else "Not connected"
-        results["tests"].append({
-            "name": "MongoDB connection",
-            "success": mongo.db is not None,
-            "status": mongo_status
-        })
-    except Exception as e:
-        results["tests"].append({
-            "name": "MongoDB connection",
-            "success": False,
-            "error": str(e)
-        })
-    
     # Overall status
     results["overall_success"] = all(test.get("success", False) for test in results["tests"])
     
@@ -676,6 +550,8 @@ if __name__ == '__main__':
         'plan': 'Basic',
         'joined_date': datetime.datetime.now().strftime('%Y-%m-%d'),
         'words_used': 125,
+        'words_remaining': 1375,
+        'phone_number': '254712345678',
         'payment_status': 'Paid',
         'api_keys': {
             'gpt_zero': '',
@@ -690,40 +566,11 @@ if __name__ == '__main__':
         'phone_number': '254712345678',
         'amount': pricing_plans['Basic']['price'],
         'date': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'status': 'Completed'
+        'status': 'Completed',
+        'reference': 'DEMOREF123456',
+        'subscription_type': 'Basic'
     })
     
-    # Create the demo user in MongoDB if it doesn't exist
-    try:
-        if not get_user('demo'):
-            from models import create_user, update_user
-            try:
-                create_user('demo', 'demo', '254712345678')
-                update_user('demo', {
-                    'plan': 'Basic',
-                    'payment_status': 'Paid',
-                    'words_remaining': 1375,  # Basic plan limit - words used
-                    'api_keys': {
-                        'gpt_zero': '',
-                        'originality': ''
-                    }
-                })
-                # Record a payment for the demo user
-                from models import record_payment
-                record_payment(
-                    'demo',
-                    pricing_plans['Basic']['price'],
-                    'Basic',
-                    'completed',
-                    'DEMOREF123456',
-                    'TXND3M0123456'
-                )
-                logger.info("Demo user created successfully")
-            except Exception as e:
-                logger.error(f"Error creating demo user: {str(e)}")
-    except Exception as e:
-        logger.error(f"Error checking for demo user: {str(e)}")
-
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting {APP_NAME} server on port {port}...")
     logger.info("Available plans:")
