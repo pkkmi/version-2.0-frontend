@@ -240,7 +240,7 @@ def humanize():
             flash('Please complete payment to access premium features', 'warning')
             return redirect(url_for('pricing'))
 
-    return render_template_string(html_templates['humanize.html'],
+    return render_template_string(html_templates.get('humanize.html', '{% extends "base.html" %}{% block title %}Humanize Text{% endblock %}{% block content %}<div class="container"><h1>Humanize Text</h1><p>Please check back later for this feature.</p></div>{% endblock %}'),
                                   message=message,
                                   humanized_text=humanized_text,
                                   payment_required=payment_required,
@@ -273,7 +273,7 @@ def detect():
             flash('Please complete payment to access premium features', 'warning')
             return redirect(url_for('pricing'))
 
-    return render_template_string(html_templates['detect.html'],
+    return render_template_string(html_templates.get('detect.html', '{% extends "base.html" %}{% block title %}Detect AI{% endblock %}{% block content %}<div class="container"><h1>Detect AI</h1><p>Please check back later for this feature.</p></div>{% endblock %}'),
                                   result=result,
                                   message=message,
                                   payment_required=payment_required)
@@ -340,23 +340,23 @@ def api_integration():
         flash('API keys updated successfully!', 'success')
         return redirect(url_for('api_integration'))
 
-    return render_template_string(html_templates['api_integration.html'],
+    return render_template_string(html_templates.get('api_integration.html', '{% extends "base.html" %}{% block title %}API Integration{% endblock %}{% block content %}<div class="container"><h1>API Integration</h1><p>Configure your API keys here.</p></div>{% endblock %}'),
                                   api_keys=api_keys)
 
 
 @app.route('/faq')
 def faq():
-    return render_template_string(html_templates['faq.html'])
+    return render_template_string(html_templates.get('faq.html', '{% extends "base.html" %}{% block title %}FAQ{% endblock %}{% block content %}<div class="container"><h1>Frequently Asked Questions</h1><p>Coming soon...</p></div>{% endblock %}'))
 
 
 @app.route('/community')
 def community():
-    return render_template_string(html_templates['community.html'])
+    return render_template_string(html_templates.get('community.html', '{% extends "base.html" %}{% block title %}Community{% endblock %}{% block content %}<div class="container"><h1>Community</h1><p>Coming soon...</p></div>{% endblock %}'))
 
 
 @app.route('/download')
 def download():
-    return render_template_string(html_templates['download.html'])
+    return render_template_string(html_templates.get('download.html', '{% extends "base.html" %}{% block title %}Download{% endblock %}{% block content %}<div class="container"><h1>Download</h1><p>Coming soon...</p></div>{% endblock %}'))
 
 
 @app.route('/pricing', methods=['GET', 'POST'])
@@ -371,10 +371,14 @@ def pricing():
     current_plan = user.get('plan', 'Free')
     payment_status = user.get('payment_status', 'Pending')
     
-    return render_template_string(html_templates['pricing.html'], 
+    # Get payment URL from environment or default
+    payment_url = os.environ.get('PAYMENT_URL', 'https://lipia-online.vercel.app/link/andikartill')
+    
+    return render_template_string(html_templates.get('pricing.html', '{% extends "base.html" %}{% block title %}Pricing{% endblock %}{% block content %}<div class="container"><h1>Pricing</h1><p>Coming soon...</p></div>{% endblock %}'), 
                                  pricing_plans=pricing_plans,
                                  current_plan=current_plan,
-                                 payment_status=payment_status)
+                                 payment_status=payment_status,
+                                 payment_url=payment_url)
 
 
 @app.route('/payment', methods=['GET', 'POST'])
@@ -422,7 +426,7 @@ def payment():
                 # Payment initiated, show payment waiting screen
                 checkout_id = response.get('checkout_id')
                 return render_template_string(
-                    html_templates['payment_waiting.html'],
+                    html_templates.get('payment_waiting.html', '{% extends "base.html" %}{% block title %}Payment Processing{% endblock %}{% block content %}<div class="container"><h1>Payment Processing</h1><p>Please wait...</p></div>{% endblock %}'),
                     checkout_id=checkout_id,
                     phone=formatted_phone,
                     amount=amount
@@ -439,7 +443,7 @@ def payment():
     # Use payment URL from environment or default
     payment_url = os.environ.get('PAYMENT_URL', 'https://lipia-online.vercel.app/link/andikartill')
     
-    return render_template_string(html_templates['payment.html'],
+    return render_template_string(html_templates.get('payment.html', '{% extends "base.html" %}{% block title %}Payment{% endblock %}{% block content %}<div class="container"><h1>Payment</h1><p>Coming soon...</p></div>{% endblock %}'),
                                   plan=pricing_plans[user.get('plan', 'Free')],
                                   payment_url=payment_url)
 
@@ -469,7 +473,7 @@ def upgrade():
         return redirect(url_for('payment'))
 
     available_plans = {k: v for k, v in pricing_plans.items() if k != current_plan}
-    return render_template_string(html_templates['upgrade.html'], 
+    return render_template_string(html_templates.get('upgrade.html', '{% extends "base.html" %}{% block title %}Upgrade{% endblock %}{% block content %}<div class="container"><h1>Upgrade</h1><p>Coming soon...</p></div>{% endblock %}'), 
                                   current_plan=pricing_plans[current_plan],
                                   available_plans=available_plans)
 
@@ -558,104 +562,8 @@ def serve_js():
         return "// JavaScript file not found", 404, {'Content-Type': 'text/javascript'}
 
 
-# Remove storage type from templates
-html_templates['dashboard.html'] = html_templates['dashboard.html'].replace(
-    '<p class="text-muted mt-3">Storage: {{ storage_type }}</p></div>',
-    '</div>'
-)
-
-html_templates['account.html'] = html_templates['account.html'].replace(
-    '<p class="text-muted mt-3">Storage: {{ storage_type }}</p></div>',
-    '</div>'
-)
-
-# Add new template for payment waiting screen
-html_templates['payment_waiting.html'] = """
-{% extends "base.html" %}
-{% block title %}Payment Processing{% endblock %}
-{% block content %}
-<div class="container">
-    <h1>Payment Processing</h1>
-    <div class="card">
-        <div class="card-header">
-            <h2>Payment In Progress</h2>
-        </div>
-        <div class="card-body">
-            <p>A payment request has been sent to your phone ({{ phone }}).</p>
-            <p>Please check your phone and approve the payment of ${{ amount }}.</p>
-            <p>This page will automatically update when the payment is complete.</p>
-            <p>Transaction ID: {{ checkout_id }}</p>
-            <div id="payment-status">Waiting for payment...</div>
-            <div class="progress">
-                <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100" style="width: 100%"></div>
-            </div>
-            <button class="btn btn-secondary mt-3" id="cancel-payment">Cancel Payment</button>
-        </div>
-    </div>
-</div>
-
-<script>
-// Poll for payment status
-let checkCount = 0;
-const maxChecks = 120; // 2 minutes at 1-second intervals
-
-function checkPaymentStatus() {
-    fetch('/payment/check/{{ checkout_id }}')
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'success') {
-                const txn = data.transaction;
-                if (txn.status === 'completed') {
-                    document.getElementById('payment-status').innerHTML = 'Payment completed!';
-                    window.location.href = '/account';
-                    return;
-                }
-            }
-            
-            // Update waiting animation
-            checkCount++;
-            const dots = '.'.repeat(checkCount % 4);
-            document.getElementById('payment-status').innerHTML = `Waiting for payment${dots}`;
-            
-            // Check if we've reached the timeout
-            if (checkCount >= maxChecks) {
-                document.getElementById('payment-status').innerHTML = 'Payment request timed out. Please try again.';
-                return;
-            }
-            
-            // Check again in 1 second
-            setTimeout(checkPaymentStatus, 1000);
-        })
-        .catch(error => {
-            console.error('Error checking payment status:', error);
-            setTimeout(checkPaymentStatus, 1000);
-        });
-}
-
-// Start checking for payment status
-checkPaymentStatus();
-
-// Handle cancel button
-document.getElementById('cancel-payment').addEventListener('click', function() {
-    // Cancel the payment
-    fetch('/payment/cancel/{{ checkout_id }}', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        }
-    })
-    .then(() => {
-        window.location.href = '/pricing';
-    })
-    .catch(error => {
-        console.error('Error cancelling payment:', error);
-        window.location.href = '/pricing';
-    });
-});
-</script>
-{% endblock %}
-"""
-
+# No need to manually replace templates since they're either loaded from files
+# or already defined in the templates.py file with fallbacks.
 
 if __name__ == '__main__':
     # Add a sample user for quick testing
