@@ -5,6 +5,7 @@ import datetime
 import re
 import os
 import requests
+import sys
 from functools import wraps
 
 from config import APP_NAME, pricing_plans
@@ -21,9 +22,8 @@ app.secret_key = os.environ.get('SECRET_KEY', ''.join(random.choice(string.ascii
 LIPIA_API_URL = os.environ.get('LIPIA_API_URL', 'http://localhost:5001/api')
 LIPIA_API_KEY = os.environ.get('LIPIA_API_KEY', '7c8a3202ae14857e71e3a9db78cf62139772cae6')
 
-# Sync with MongoDB on startup
-sync_users_with_mongodb()
-sync_transactions_with_mongodb()
+# Database initialization will happen after first request
+# This prevents worker timeouts during startup
 
 # Login decorator
 def login_required(f):
@@ -159,7 +159,9 @@ def humanize():
                 
                 if success:
                     # Update in-memory users_db
-                    users_db[session['user_id']]['words_remaining'] -= words_count
+                    user_data = get_user(session['user_id'])
+                    users_db[session['user_id']] = user_data
+                    message += f" You have {user_data['words_remaining']} words remaining."
                 else:
                     message = "Error updating word count. Please try again."
             else:
@@ -298,7 +300,8 @@ def payment():
             response = requests.post(
                 f"{LIPIA_API_URL}/payments", 
                 json=payment_data,
-                headers=headers
+                headers=headers,
+                timeout=15  # Add a reasonable timeout
             )
             
             if response.status_code == 200:
@@ -318,6 +321,10 @@ def payment():
                 return redirect(url_for('account'))
             else:
                 flash(f"Payment failed: {response.text}", 'error')
+        except requests.exceptions.Timeout:
+            flash("Payment request timed out. Please try again later.", 'error')
+        except requests.exceptions.ConnectionError:
+            flash(f"Could not connect to payment server. Please try again later.", 'error')
         except Exception as e:
             flash(f"Error processing payment: {str(e)}", 'error')
 
@@ -449,17 +456,39 @@ def api_test():
 # CSS styles
 @app.route('/static/style.css')
 def serve_css():
-    with open('static/style.css', 'r') as file:
-        css = file.read()
-    return css, 200, {'Content-Type': 'text/css'}
+    try:
+        with open('static/style.css', 'r') as file:
+            css = file.read()
+        return css, 200, {'Content-Type': 'text/css'}
+    except Exception as e:
+        print(f"Error serving CSS: {e}", file=sys.stderr)
+        return "", 404
 
 
 # JavaScript
 @app.route('/static/script.js')
 def serve_js():
-    with open('static/script.js', 'r') as file:
-        js = file.read()
-    return js, 200, {'Content-Type': 'text/javascript'}
+    try:
+        with open('static/script.js', 'r') as file:
+            js = file.read()
+        return js, 200, {'Content-Type': 'text/javascript'}
+    except Exception as e:
+        print(f"Error serving JavaScript: {e}", file=sys.stderr)
+        return "", 404
+
+
+@app.before_first_request
+def initialize_database():
+    """Initialize MongoDB connection before the first request"""
+    try:
+        print("Initializing MongoDB connection...")
+        # Sync with MongoDB
+        sync_users_with_mongodb()
+        sync_transactions_with_mongodb()
+        print("MongoDB initialization complete")
+    except Exception as e:
+        print(f"Error initializing MongoDB: {e}", file=sys.stderr)
+        print("Application will continue, but some features may not work properly", file=sys.stderr)
 
 
 if __name__ == '__main__':
@@ -482,10 +511,7 @@ if __name__ == '__main__':
             }
         )
     
-    # Sync with MongoDB
-    sync_users_with_mongodb()
-    sync_transactions_with_mongodb()
-
+    # Print startup information
     port = int(os.environ.get('PORT', 5000))
     print(f"Starting {APP_NAME} server on port {port}...")
     print("Available plans:")
@@ -497,4 +523,6 @@ if __name__ == '__main__':
     print(f"\nHumanizer API URL: {os.environ.get('HUMANIZER_API_URL', 'https://web-production-3db6c.up.railway.app')}")
     print(f"Lipia API URL: {LIPIA_API_URL}")
     
+    # Start the Flask application
+    # MongoDB initialization will happen before the first request
     app.run(host='0.0.0.0', port=port)
