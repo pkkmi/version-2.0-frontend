@@ -9,6 +9,8 @@ from datetime import datetime
 HUMANIZER_API_URL = os.environ.get("HUMANIZER_API_URL", "https://web-production-3db6c.up.railway.app")
 ADMIN_API_URL = os.environ.get("ADMIN_API_URL", "https://web-production-a776.up.railway.app") 
 AI_DETECTOR_API_URL = os.environ.get("AI_DETECTOR_API_URL", "https://ai-detector-api.example.com")
+LIPIA_API_URL = os.environ.get('LIPIA_API_URL', 'http://localhost:5001/api')
+LIPIA_API_KEY = os.environ.get('LIPIA_API_KEY', '7c8a3202ae14857e71e3a9db78cf62139772cae6')
 
 
 def humanize_text(text, user_type="Basic"):
@@ -155,7 +157,9 @@ def detect_ai_content(text):
 
 def register_user_to_backend(username, email, phone=None, plan_type=None):
     """
-    Register a user to the backend API
+    Register a user to both backend systems:
+    1. The original Andikar admin API
+    2. The new Lipia MongoDB API
     
     Args:
         username (str): Username
@@ -166,8 +170,12 @@ def register_user_to_backend(username, email, phone=None, plan_type=None):
     Returns:
         tuple: (success, message)
     """
+    success_admin = False
+    success_lipia = False
+    
+    # Try to register with Andikar admin API
     try:
-        # Prepare the data to send to the backend
+        # Prepare the data to send to the admin backend
         registration_data = {
             "name": username,
             "email": email,
@@ -179,35 +187,64 @@ def register_user_to_backend(username, email, phone=None, plan_type=None):
             }
         }
         
-        print(f"Attempting to register user to backend at: {ADMIN_API_URL}/api/register")
-        print(f"Registration data: {json.dumps(registration_data)}")
+        print(f"Attempting to register user to Andikar backend at: {ADMIN_API_URL}/api/register")
         
         # Send the data to the backend API
         response = requests.post(
             f"{ADMIN_API_URL}/api/register", 
             json=registration_data,
-            timeout=15,  # Increased timeout for potentially slow connections
-            headers={"Content-Type": "application/json"}  # Explicitly set content type
+            timeout=15,
+            headers={"Content-Type": "application/json"}
         )
         
-        print(f"Backend registration response status: {response.status_code}")
-        try:
-            print(f"Response body: {response.text[:200]}")
-        except:
-            print("Could not print response body")
+        print(f"Andikar backend registration response status: {response.status_code}")
         
         if response.status_code == 201:
-            return True, "Registration successful!"
-        elif response.status_code == 400:
-            # Extract error message from response if available
-            try:
-                error_msg = response.json().get('message', 'Email already registered or invalid data')
-                return False, error_msg
-            except:
-                return False, "Registration failed: Invalid data"
-        else:
-            return False, f"Registration failed: Server error ({response.status_code})"
-            
+            success_admin = True
     except Exception as e:
-        print(f"Error registering user to backend: {e}")
-        return False, f"Registration error: {str(e)}"
+        print(f"Error registering user to Andikar backend: {e}")
+    
+    # Try to register with Lipia MongoDB API
+    try:
+        # Format PIN (default to last 4 chars of username if not a phone number)
+        pin = ''.join(c for c in phone[-4:] if c.isdigit()) if phone else username[-4:]
+        
+        # Ensure PIN is exactly 4 digits
+        if not (pin.isdigit() and len(pin) == 4):
+            pin = ''.join(random.choices('0123456789', k=4))
+        
+        # Prepare data for Lipia API
+        lipia_data = {
+            "username": username,
+            "pin": pin,
+            "phone_number": phone if phone else "0700000000",
+            "words_remaining": 500 if plan_type == "Free" else 0
+        }
+        
+        headers = {
+            "X-API-Key": LIPIA_API_KEY,
+            "Content-Type": "application/json"
+        }
+        
+        print(f"Attempting to register user to Lipia backend at: {LIPIA_API_URL}/users")
+        
+        # Send the data to the Lipia API
+        response = requests.post(
+            f"{LIPIA_API_URL}/users", 
+            json=lipia_data,
+            timeout=15,
+            headers=headers
+        )
+        
+        print(f"Lipia backend registration response status: {response.status_code}")
+        
+        if response.status_code in [201, 409]:  # 409 means user already exists
+            success_lipia = True
+    except Exception as e:
+        print(f"Error registering user to Lipia backend: {e}")
+    
+    # Return overall success and message
+    if success_admin or success_lipia:
+        return True, "Registration successful with at least one backend service."
+    else:
+        return False, "Registration failed with all backend services."

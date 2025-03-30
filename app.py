@@ -5,15 +5,25 @@ import datetime
 import re
 import os
 import requests
+import sys
 from functools import wraps
 
 from config import APP_NAME, pricing_plans
-from models import users_db, transactions_db
+from models import (users_db, transactions_db, sync_users_with_mongodb, 
+                   sync_transactions_with_mongodb, user_exists, get_user, 
+                   create_user, update_user, consume_words, update_api_keys)
 from utils import humanize_text, detect_ai_content, register_user_to_backend
 from templates import html_templates
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(32)))
+
+# API URL for backend services
+LIPIA_API_URL = os.environ.get('LIPIA_API_URL', 'http://localhost:5001/api')
+LIPIA_API_KEY = os.environ.get('LIPIA_API_KEY', '7c8a3202ae14857e71e3a9db78cf62139772cae6')
+
+# Database initialization will happen after first request
+# This prevents worker timeouts during startup
 
 # Login decorator
 def login_required(f):
@@ -36,11 +46,17 @@ def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
-
-        # Check if user exists (simplified for demo)
-        if username in users_db and users_db[username]['password'] == password:
+        
+        # Try to get user from MongoDB
+        user_data = get_user(username)
+        
+        if user_data and user_data.get('password') == password:
             session['user_id'] = username
             flash('Login successful!', 'success')
+            
+            # Sync transactions for this user
+            sync_transactions_with_mongodb(username)
+            
             return redirect(url_for('dashboard'))
         else:
             flash('Invalid credentials', 'error')
@@ -59,41 +75,40 @@ def register():
         email = request.form['email']
         phone = request.form.get('phone', None)  # Phone is optional
 
-        if username in users_db:
+        if user_exists(username):
             flash('Username already exists', 'error')
         else:
-            # Set payment status (Free tier is automatically Paid)
-            payment_status = 'Paid' if plan_type == 'Free' else 'Pending'
-
-            # Save user to in-memory database
-            users_db[username] = {
-                'password': password,
-                'plan': plan_type,
-                'joined_date': datetime.datetime.now().strftime('%Y-%m-%d'),
-                'words_used': 0,
-                'payment_status': payment_status,
-                'api_keys': {
-                    'gpt_zero': '',
-                    'originality': ''
-                }
-            }
-            
-            # Register the user to the backend API
-            success, message = register_user_to_backend(
+            # Create user in MongoDB
+            created = create_user(
                 username=username,
+                password=password,
+                plan_type=plan_type,
                 email=email,
-                phone=phone,
-                plan_type=plan_type
+                phone=phone
             )
             
-            if success:
-                flash('Registration successful! Please login.', 'success')
-                return redirect(url_for('login'))
+            if created:
+                # Sync with MongoDB after creating user
+                sync_users_with_mongodb()
+                
+                # Register the user to the backend API
+                success, message = register_user_to_backend(
+                    username=username,
+                    email=email,
+                    phone=phone,
+                    plan_type=plan_type
+                )
+                
+                if success:
+                    flash('Registration successful! Please login.', 'success')
+                    return redirect(url_for('login'))
+                else:
+                    # If backend registration fails, we'll still allow the user to proceed
+                    # but inform them of the issue
+                    flash(f'Local registration successful, but backend sync encountered an issue: {message}', 'warning')
+                    return redirect(url_for('login'))
             else:
-                # If backend registration fails, we'll still allow the user to proceed
-                # but inform them of the issue
-                flash(f'Local registration successful, but backend sync encountered an issue: {message}', 'warning')
-                return redirect(url_for('login'))
+                flash('Registration failed. Please try again.', 'error')
 
     return render_template_string(html_templates['register.html'], pricing_plans=pricing_plans)
 
@@ -101,7 +116,18 @@ def register():
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    user_data = users_db[session['user_id']]
+    # Get latest user data from MongoDB
+    user_data = get_user(session['user_id'])
+    
+    if not user_data:
+        # If user not found in MongoDB but exists in session, something is wrong
+        session.pop('user_id', None)
+        flash('User not found. Please login again.', 'error')
+        return redirect(url_for('login'))
+    
+    # Update in-memory users_db for compatibility
+    users_db[session['user_id']] = user_data
+    
     return render_template_string(html_templates['dashboard.html'], user=user_data,
                                   plan=pricing_plans[user_data['plan']])
 
@@ -111,19 +137,35 @@ def dashboard():
 def humanize():
     message = ""
     humanized_text = ""
-    payment_required = users_db[session['user_id']]['payment_status'] == 'Pending' and users_db[session['user_id']][
-        'plan'] != 'Free'
+    
+    # Get latest user data
+    user_data = get_user(session['user_id'])
+    payment_required = user_data['payment_status'] == 'Pending' and user_data['plan'] != 'Free'
 
     if request.method == 'POST':
         original_text = request.form['original_text']
-        user_type = users_db[session['user_id']]['plan']
+        user_type = user_data['plan']
 
         # Only process if payment not required or on Free plan
         if not payment_required:
-            humanized_text, message = humanize_text(original_text, user_type)
+            # Check if user has enough words
+            words_count = len(original_text.split())
+            
+            if words_count <= user_data['words_remaining']:
+                humanized_text, message = humanize_text(original_text, user_type)
 
-            # Update word usage
-            users_db[session['user_id']]['words_used'] += len(original_text.split())
+                # Consume words using MongoDB
+                success = consume_words(session['user_id'], words_count)
+                
+                if success:
+                    # Update in-memory users_db
+                    user_data = get_user(session['user_id'])
+                    users_db[session['user_id']] = user_data
+                    message += f" You have {user_data['words_remaining']} words remaining."
+                else:
+                    message = "Error updating word count. Please try again."
+            else:
+                message = f"You need {words_count} words but only have {user_data['words_remaining']} remaining. Please upgrade your plan."
         else:
             message = "Payment required to access this feature. Please upgrade your plan."
 
@@ -131,7 +173,8 @@ def humanize():
                                   message=message,
                                   humanized_text=humanized_text,
                                   payment_required=payment_required,
-                                  word_limit=pricing_plans[users_db[session['user_id']]['plan']]['word_limit'])
+                                  word_limit=pricing_plans[user_data['plan']]['word_limit'],
+                                  words_remaining=user_data['words_remaining'])
 
 
 @app.route('/detect', methods=['GET', 'POST'])
@@ -139,8 +182,10 @@ def humanize():
 def detect():
     result = None
     message = ""
-    payment_required = users_db[session['user_id']]['payment_status'] == 'Pending' and users_db[session['user_id']][
-        'plan'] != 'Free'
+    
+    # Get latest user data
+    user_data = get_user(session['user_id'])
+    payment_required = user_data['payment_status'] == 'Pending' and user_data['plan'] != 'Free'
 
     if request.method == 'POST':
         text = request.form['text']
@@ -160,8 +205,15 @@ def detect():
 @app.route('/account')
 @login_required
 def account():
-    user_data = users_db[session['user_id']]
+    # Get latest user data
+    user_data = get_user(session['user_id'])
+    
+    # Sync transactions with MongoDB for this user
+    sync_transactions_with_mongodb(session['user_id'])
+    
+    # Filter transactions for this user
     user_transactions = [t for t in transactions_db if t['user_id'] == session['user_id']]
+    
     return render_template_string(html_templates['account.html'], user=user_data, plan=pricing_plans[user_data['plan']],
                                   transactions=user_transactions)
 
@@ -173,15 +225,31 @@ def api_integration():
         gpt_zero_key = request.form.get('gpt_zero_key', '')
         originality_key = request.form.get('originality_key', '')
 
-        # Update API keys
-        users_db[session['user_id']]['api_keys']['gpt_zero'] = gpt_zero_key
-        users_db[session['user_id']]['api_keys']['originality'] = originality_key
-
-        flash('API keys updated successfully!', 'success')
+        # Update API keys in MongoDB
+        success = update_api_keys(
+            username=session['user_id'],
+            gpt_zero_key=gpt_zero_key,
+            originality_key=originality_key
+        )
+        
+        if success:
+            # Update in-memory user data
+            users_db[session['user_id']]['api_keys'] = {
+                'gpt_zero': gpt_zero_key,
+                'originality': originality_key
+            }
+            
+            flash('API keys updated successfully!', 'success')
+        else:
+            flash('Failed to update API keys. Please try again.', 'error')
+            
         return redirect(url_for('api_integration'))
 
+    # Get latest user data
+    user_data = get_user(session['user_id'])
+    
     return render_template_string(html_templates['api_integration.html'],
-                                  api_keys=users_db[session['user_id']]['api_keys'])
+                                  api_keys=user_data['api_keys'])
 
 
 @app.route('/faq')
@@ -210,40 +278,61 @@ def pricing():
 def payment():
     if request.method == 'POST':
         phone_number = request.form['phone_number']
-        amount = pricing_plans[users_db[session['user_id']]['plan']]['price']
-
-        # Simulate M-PESA payment
-        transaction_id = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(10))
-
-        transactions_db.append({
-            'transaction_id': transaction_id,
-            'user_id': session['user_id'],
-            'phone_number': phone_number,
-            'amount': amount,
-            'date': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'status': 'Completed'
-        })
-
-        users_db[session['user_id']]['payment_status'] = 'Paid'
-        flash(f'Payment of KES {amount} successful! Transaction ID: {transaction_id}', 'success')
         
-        # When a payment is completed, update user profile in backend
-        try:
-            # Use a default email format if we don't have their email
-            email = f"{session['user_id']}@example.com"  # This is just a fallback
-            register_user_to_backend(
-                username=session['user_id'],
-                email=email,
-                phone=phone_number,
-                plan_type=users_db[session['user_id']]['plan']
-            )
-        except Exception as e:
-            print(f"Error updating user profile in backend: {e}")
-            
-        return redirect(url_for('account'))
+        # Get latest user data
+        user_data = get_user(session['user_id'])
+        amount = pricing_plans[user_data['plan']]['price']
 
+        # Call Lipia Backend API to process payment
+        try:
+            payment_data = {
+                'username': session['user_id'],
+                'amount': amount,
+                'subscription_type': user_data['plan'].lower(),
+                'phone_number': phone_number
+            }
+            
+            headers = {
+                'X-API-Key': LIPIA_API_KEY,
+                'Content-Type': 'application/json'
+            }
+            
+            response = requests.post(
+                f"{LIPIA_API_URL}/payments", 
+                json=payment_data,
+                headers=headers,
+                timeout=15  # Add a reasonable timeout
+            )
+            
+            if response.status_code == 200:
+                payment_result = response.json()
+                
+                # Update user payment status
+                update_user(
+                    username=session['user_id'],
+                    data={'payment_status': 'Paid'}
+                )
+                
+                # Sync with MongoDB
+                sync_users_with_mongodb()
+                sync_transactions_with_mongodb(session['user_id'])
+                
+                flash(f"Payment of KES {amount} successful! Reference: {payment_result.get('reference')}", 'success')
+                return redirect(url_for('account'))
+            else:
+                flash(f"Payment failed: {response.text}", 'error')
+        except requests.exceptions.Timeout:
+            flash("Payment request timed out. Please try again later.", 'error')
+        except requests.exceptions.ConnectionError:
+            flash(f"Could not connect to payment server. Please try again later.", 'error')
+        except Exception as e:
+            flash(f"Error processing payment: {str(e)}", 'error')
+
+    # Get latest user data
+    user_data = get_user(session['user_id'])
+    
     return render_template_string(html_templates['payment.html'],
-                                  plan=pricing_plans[users_db[session['user_id']]['plan']])
+                                  plan=pricing_plans[user_data['plan']])
 
 
 @app.route('/upgrade', methods=['GET', 'POST'])
@@ -251,12 +340,26 @@ def payment():
 def upgrade():
     if request.method == 'POST':
         new_plan = request.form['new_plan']
-        users_db[session['user_id']]['plan'] = new_plan
-        users_db[session['user_id']]['payment_status'] = 'Pending'
+        
+        # Update user plan in MongoDB
+        update_user(
+            username=session['user_id'],
+            data={
+                'plan': new_plan,
+                'payment_status': 'Pending'
+            }
+        )
+        
+        # Sync with MongoDB
+        sync_users_with_mongodb()
+        
         flash(f'Your plan has been upgraded to {new_plan}. Please make payment to activate.', 'success')
         return redirect(url_for('payment'))
 
-    current_plan = users_db[session['user_id']]['plan']
+    # Get latest user data
+    user_data = get_user(session['user_id'])
+    current_plan = user_data['plan']
+    
     available_plans = {k: v for k, v in pricing_plans.items() if k != current_plan}
     return render_template_string(html_templates['upgrade.html'], current_plan=pricing_plans[current_plan],
                                   available_plans=available_plans)
@@ -328,20 +431,18 @@ def api_test():
             "error": str(e)
         })
         
-    # Test 4: Check the admin API registration endpoint
-    admin_api_url = os.environ.get("ADMIN_API_URL", "https://railway-test-api-production.up.railway.app")
+    # Test 4: Check the Lipia API
     try:
-        # Just check if the endpoint is reachable, don't actually register
-        response = requests.get(f"{admin_api_url}/", timeout=5)
+        response = requests.get(f"{LIPIA_API_URL}/", timeout=5)
         results["tests"].append({
-            "name": "Admin API root endpoint",
+            "name": "Lipia API root endpoint",
             "success": response.status_code == 200,
             "status": response.status_code,
             "content_type": response.headers.get('content-type', 'Unknown')
         })
     except Exception as e:
         results["tests"].append({
-            "name": "Admin API root endpoint",
+            "name": "Lipia API root endpoint",
             "success": False,
             "error": str(e)
         })
@@ -355,43 +456,62 @@ def api_test():
 # CSS styles
 @app.route('/static/style.css')
 def serve_css():
-    with open('static/style.css', 'r') as file:
-        css = file.read()
-    return css, 200, {'Content-Type': 'text/css'}
+    try:
+        with open('static/style.css', 'r') as file:
+            css = file.read()
+        return css, 200, {'Content-Type': 'text/css'}
+    except Exception as e:
+        print(f"Error serving CSS: {e}", file=sys.stderr)
+        return "", 404
 
 
 # JavaScript
 @app.route('/static/script.js')
 def serve_js():
-    with open('static/script.js', 'r') as file:
-        js = file.read()
-    return js, 200, {'Content-Type': 'text/javascript'}
+    try:
+        with open('static/script.js', 'r') as file:
+            js = file.read()
+        return js, 200, {'Content-Type': 'text/javascript'}
+    except Exception as e:
+        print(f"Error serving JavaScript: {e}", file=sys.stderr)
+        return "", 404
+
+
+@app.before_first_request
+def initialize_database():
+    """Initialize MongoDB connection before the first request"""
+    try:
+        print("Initializing MongoDB connection...")
+        # Sync with MongoDB
+        sync_users_with_mongodb()
+        sync_transactions_with_mongodb()
+        print("MongoDB initialization complete")
+    except Exception as e:
+        print(f"Error initializing MongoDB: {e}", file=sys.stderr)
+        print("Application will continue, but some features may not work properly", file=sys.stderr)
 
 
 if __name__ == '__main__':
-    # Add a sample user for quick testing
-    users_db['demo'] = {
-        'password': 'demo',
-        'plan': 'Basic',
-        'joined_date': datetime.datetime.now().strftime('%Y-%m-%d'),
-        'words_used': 125,
-        'payment_status': 'Paid',
-        'api_keys': {
-            'gpt_zero': '',
-            'originality': ''
-        }
-    }
-
-    # Create a sample transaction
-    transactions_db.append({
-        'transaction_id': 'TXND3M0123456',
-        'user_id': 'demo',
-        'phone_number': '254712345678',
-        'amount': pricing_plans['Basic']['price'],
-        'date': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'status': 'Completed'
-    })
-
+    # Create demo account if it doesn't exist already
+    if not user_exists('demo'):
+        create_user(
+            username='demo',
+            password='demo',
+            plan_type='Basic',
+            email='demo@example.com',
+            phone='0712345678'
+        )
+        
+        # Update demo account to have some words and paid status
+        update_user(
+            username='demo',
+            data={
+                'words_remaining': 125,
+                'payment_status': 'Paid'
+            }
+        )
+    
+    # Print startup information
     port = int(os.environ.get('PORT', 5000))
     print(f"Starting {APP_NAME} server on port {port}...")
     print("Available plans:")
@@ -401,7 +521,8 @@ if __name__ == '__main__':
     print("  Username: demo")
     print("  Password: demo")
     print(f"\nHumanizer API URL: {os.environ.get('HUMANIZER_API_URL', 'https://web-production-3db6c.up.railway.app')}")
-    admin_api_url = os.environ.get("ADMIN_API_URL", "https://railway-test-api-production.up.railway.app")
-    print(f"Admin API URL: {admin_api_url}")
+    print(f"Lipia API URL: {LIPIA_API_URL}")
     
+    # Start the Flask application
+    # MongoDB initialization will happen before the first request
     app.run(host='0.0.0.0', port=port)
