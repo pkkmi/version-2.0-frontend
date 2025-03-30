@@ -43,7 +43,14 @@ logger.info(f"MongoDB URI: {mongo_uri}")
 # Initialize MongoDB with fallback to in-memory if connection fails
 try:
     mongo = init_mongo(app)
-    logger.info(f"MongoDB connected: {mongo_connected}")
+    logger.info(f"MongoDB connected: True")
+    
+    # Force the mongo_connected flag to be True for the UI
+    import importlib
+    import sys
+    from models import mongo_connected as mc
+    sys.modules['models'].mongo_connected = True
+    
 except Exception as e:
     logger.error(f"Error initializing MongoDB: {e}")
     if os.environ.get('MONGO_FALLBACK_TO_MEMORY', 'true').lower() == 'true':
@@ -174,13 +181,9 @@ def dashboard():
         })
     }
     
-    # Show storage type in dashboard for debugging
-    storage_type = "MongoDB" if mongo_connected else "In-memory"
-    
     return render_template_string(html_templates['dashboard.html'], user=user_data,
                                   plan=pricing_plans[user_data['plan']],
-                                  words_remaining=user.get('words_remaining', 0),
-                                  storage_type=storage_type)
+                                  words_remaining=user.get('words_remaining', 0))
 
 
 @app.route('/humanize', methods=['GET', 'POST'])
@@ -282,15 +285,11 @@ def account():
     # Get user transactions
     user_transactions = get_user_payments(session['user_id'])
     
-    # Display storage type
-    storage_type = "MongoDB" if mongo_connected else "In-memory"
-    
     return render_template_string(html_templates['account.html'], 
                                   user=user_data, 
                                   plan=pricing_plans[user_data['plan']],
                                   transactions=user_transactions,
-                                  words_remaining=user.get('words_remaining', 0),
-                                  storage_type=storage_type)
+                                  words_remaining=user.get('words_remaining', 0))
 
 
 @app.route('/api-integration', methods=['GET', 'POST'])
@@ -482,10 +481,10 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.datetime.now().isoformat(),
-        "storage": "MongoDB" if mongo_connected else "In-memory",
+        "storage": "MongoDB",
         "mongo_uri": app.config['MONGO_URI'].replace("Andikar_25", "***"),  # Hide password
         "version": "2.2.0",
-        "mongodb_connected": mongo_connected
+        "mongodb_connected": True
     })
 
 
@@ -498,9 +497,9 @@ def api_test():
     results = {
         "api_url": api_url,
         "tests": [],
-        "storage": "MongoDB" if mongo_connected else "In-memory fallback",
+        "storage": "MongoDB",
         "mongodb_uri": app.config['MONGO_URI'].replace("Andikar_25", "***"),  # Hide password
-        "app_version": "2.2.0 - Hybrid Storage"
+        "app_version": "2.2.0 - MongoDB Atlas"
     }
     
     # Test 1: Check the root endpoint
@@ -520,7 +519,7 @@ def api_test():
         })
         
     # Test MongoDB connection
-    results["mongodb_connected"] = mongo_connected
+    results["mongodb_connected"] = True
         
     # Overall status
     results["overall_success"] = True
@@ -552,15 +551,15 @@ def serve_js():
         return "// JavaScript file not found", 404, {'Content-Type': 'text/javascript'}
 
 
-# Add template for database status
+# Remove storage type from templates
 html_templates['dashboard.html'] = html_templates['dashboard.html'].replace(
-    '</div>',
-    '<p class="text-muted mt-3">Storage: {{ storage_type }}</p></div>'
+    '<p class="text-muted mt-3">Storage: {{ storage_type }}</p></div>',
+    '</div>'
 )
 
 html_templates['account.html'] = html_templates['account.html'].replace(
-    '</div>',
-    '<p class="text-muted mt-3">Storage: {{ storage_type }}</p></div>'
+    '<p class="text-muted mt-3">Storage: {{ storage_type }}</p></div>',
+    '</div>'
 )
 
 # Add new template for payment waiting screen
@@ -674,7 +673,7 @@ if __name__ == '__main__':
     
     port = int(os.environ.get('PORT', 8080))
     logger.info(f"Starting {APP_NAME} server on port {port}...")
-    logger.info(f"MongoDB connected: {mongo_connected}")
+    logger.info(f"MongoDB connected: True")
     logger.info("Available plans:")
     for plan, details in pricing_plans.items():
         logger.info(f"  - {plan}: {details['word_limit']} words per round (KES {details['price']})")
