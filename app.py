@@ -5,6 +5,8 @@ import datetime
 import re
 import os
 import requests
+import threading
+import time
 from functools import wraps
 import logging
 from dotenv import load_dotenv
@@ -63,10 +65,22 @@ except Exception as e:
 # Register blueprints
 try:
     from auth import auth_bp, login_required
-    from payment import payment_bp
+    from payment import payment_bp, check_callbacks
     app.register_blueprint(auth_bp)
     app.register_blueprint(payment_bp)
     logger.info("Blueprints registered")
+    
+    # Start a background thread to check for payment callbacks
+    def background_callback_checker():
+        while True:
+            with app.app_context():
+                check_callbacks()
+            time.sleep(1)
+    
+    callback_thread = threading.Thread(target=background_callback_checker, daemon=True)
+    callback_thread.start()
+    logger.info("Started background payment callback checker")
+    
 except Exception as e:
     logger.error(f"Error registering blueprints: {e}")
     # Basic login_required function if the import fails
@@ -362,69 +376,41 @@ def payment():
         amount = pricing_plans[plan_type]['price']
 
         try:
-            # First try to use the payment API (from payment blueprint)
-            try:
-                payment_url = os.environ.get('PAYMENT_URL', 'https://lipia-online.vercel.app/link/andikartill')
-                
-                # Call the payment API through the payment blueprint
-                from payment import initiate_payment
-                response = initiate_payment({
-                    'username': session['user_id'], 
+            # Format phone number
+            from payment import format_phone_for_api
+            formatted_phone = format_phone_for_api(phone_number)
+            
+            # Call our payment API
+            from payment import initiate_payment
+            response = requests.post(
+                url_for('payment.initiate_payment', _external=True),
+                json={
+                    'username': session['user_id'],
                     'subscription_type': plan_type,
-                    'phone_number': phone_number
-                })
+                    'phone_number': formatted_phone
+                },
+                headers={'Content-Type': 'application/json'}
+            ).json()
+            
+            if response.get('status') == 'success':
+                # Payment immediately succeeded
+                words_added = response.get('words_added', 0)
+                flash(f'Payment of KES {amount} processed successfully. {words_added} words have been added to your account.', 'success')
+                return redirect(url_for('account'))
+            elif response.get('status') == 'pending':
+                # Payment initiated, show payment waiting screen
+                checkout_id = response.get('checkout_id')
+                return render_template_string(
+                    html_templates['payment_waiting.html'],
+                    checkout_id=checkout_id,
+                    phone=formatted_phone,
+                    amount=amount
+                )
+            else:
+                # Error handling
+                flash(f"Payment error: {response.get('message', 'Unknown error')}", 'error')
+                return redirect(url_for('payment'))
                 
-                if response and response.get('status') == 'success':
-                    # Payment immediately succeeded (unusual but handle it)
-                    flash(f'Payment of KES {amount} processed successfully. {response.get("words_added", 0)} words have been added to your account.', 'success')
-                    return redirect(url_for('account'))
-                elif response and response.get('status') == 'pending':
-                    # Show payment waiting screen
-                    checkout_id = response.get('checkout_id', 'UNKNOWN')
-                    return render_template_string(
-                        html_templates['payment_waiting.html'],
-                        checkout_id=checkout_id,
-                        phone=phone_number,
-                        amount=amount
-                    )
-                else:
-                    # Fall back to manual processing
-                    raise Exception("Payment API returned an unexpected response")
-            except ImportError:
-                # Fall back to manual processing
-                logger.warning("Payment module not available. Using manual processing.")
-                raise Exception("Payment API not available")
-            except Exception as e:
-                logger.error(f"Payment API error: {str(e)}")
-                # Fall back to manual processing
-                raise
-                
-            # Manual processing as fallback
-            from models import update_user, update_word_count, record_payment
-            
-            # Generate a transaction ID
-            checkout_id = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(10))
-            
-            # Update user's words
-            words_to_add = pricing_plans[plan_type]['word_limit']
-            new_word_count = update_word_count(session['user_id'], words_to_add)
-            
-            # Update payment status
-            update_user(session['user_id'], {'payment_status': 'Paid'})
-            
-            # Record payment
-            record_payment(
-                session['user_id'],
-                amount,
-                plan_type,
-                'completed',
-                'MANUAL'+checkout_id,
-                checkout_id
-            )
-            
-            flash(f'Payment of KES {amount} processed successfully. {words_to_add} words have been added to your account.', 'success')
-            return redirect(url_for('account'))
-            
         except Exception as e:
             logger.error(f"Payment error: {str(e)}")
             flash(f"Payment error: {str(e)}", 'error')
@@ -630,7 +616,20 @@ checkPaymentStatus();
 
 // Handle cancel button
 document.getElementById('cancel-payment').addEventListener('click', function() {
-    window.location.href = '/account';
+    // Cancel the payment
+    fetch('/payment/cancel/{{ checkout_id }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(() => {
+        window.location.href = '/account';
+    })
+    .catch(error => {
+        console.error('Error cancelling payment:', error);
+        window.location.href = '/account';
+    });
 });
 </script>
 {% endblock %}
