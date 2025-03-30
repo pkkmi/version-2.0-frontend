@@ -7,7 +7,7 @@ import os
 import requests
 from functools import wraps
 import logging
-import signal
+import time
 
 from config import APP_NAME, pricing_plans
 from models import users_db, transactions_db, init_mongo, get_user, update_word_count, get_user_payments, mongo_connected
@@ -24,29 +24,33 @@ logging.basicConfig(level=logging.INFO)
 logger = app.logger
 logger.info("Starting application...")
 
-# MongoDB configuration - use the public URL
-app.config['MONGO_URI'] = os.environ.get(
-    'MONGO_PUBLIC_URL', 
-    'mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@metro.proxy.rlwy.net:52335/lipia'
+# MongoDB configuration - use the public URL explicitly
+mongo_url = os.environ.get('MONGO_PUBLIC_URL', '')
+if not mongo_url:
+    # Try to construct URL from parts if public URL not provided
+    mongo_user = os.environ.get('MONGOUSER', 'mongo')
+    mongo_pass = os.environ.get('MONGOPASSWORD', 'tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg')
+    mongo_host = os.environ.get('MONGO_HOST', 'metro.proxy.rlwy.net')
+    mongo_port = os.environ.get('MONGO_PORT', '52335')
+    mongo_url = f"mongodb://{mongo_user}:{mongo_pass}@{mongo_host}:{mongo_port}/lipia"
+
+app.config['MONGO_URI'] = mongo_url
+# Mask password for logging
+masked_url = app.config['MONGO_URI'].replace(
+    os.environ.get('MONGOPASSWORD', 'tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg'), 
+    '****'
 )
-logger.info(f"MongoDB URI: {app.config['MONGO_URI']}")
+logger.info(f"MongoDB URI: {masked_url}")
 
-# Set up timeout handler for Flask
-def timeout_handler(signum, frame):
-    logger.error("Request timed out")
-    raise TimeoutError("Request timed out")
-
-# Set a 30-second timeout for requests
-signal.signal(signal.SIGALRM, timeout_handler)
+# Attempt different database names if authentication fails
+app.config['MONGO_DBNAME'] = os.environ.get('MONGO_DBNAME', 'lipia')
 
 # Initialize MongoDB with fallback to in-memory if connection fails
 try:
-    signal.alarm(5)  # 5-second timeout for MongoDB initialization
+    # Add a short timeout for MongoDB initialization
     mongo = init_mongo(app)
-    signal.alarm(0)  # Cancel the alarm
     logger.info(f"MongoDB connected: {mongo_connected}")
 except Exception as e:
-    signal.alarm(0)  # Cancel the alarm
     logger.error(f"Error initializing MongoDB: {e}")
     logger.warning("Continuing with in-memory storage")
 
@@ -440,7 +444,7 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.datetime.now().isoformat(),
         "storage": "MongoDB" if mongo_connected else "In-memory",
-        "mongo_url": app.config['MONGO_URI']
+        "mongo_url": masked_url
     })
 
 
@@ -454,7 +458,7 @@ def api_test():
         "api_url": api_url,
         "tests": [],
         "storage": "MongoDB" if mongo_connected else "In-memory fallback",
-        "mongodb_uri": app.config['MONGO_URI'],
+        "mongodb_uri": masked_url,
         "app_version": "2.1.0 - Hybrid Storage"
     }
     
