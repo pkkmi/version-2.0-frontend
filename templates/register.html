@@ -1,108 +1,35 @@
 {% extends "base.html" %}
-{% block title %}Register{% endblock %}
+{% block title %}Register - Andikar AI{% endblock %}
 {% block content %}
-<div class="container">
-    <div class="row justify-content-center">
-        <div class="col-md-8">
-            <div class="card">
-                <div class="card-header">
-                    <h1 class="card-title">Register</h1>
-                </div>
-                <div class="card-body">
-                    <form method="post" action="{{ url_for('register') }}">
-                        <div class="mb-3">
-                            <label for="username" class="form-label">Username</label>
-                            <input type="text" class="form-control" id="username" name="username" required>
-                        </div>
-                        <div class="mb-3">
-                            <label for="password" class="form-label">Password</label>
-                            <input type="password" class="form-control" id="password" name="password" required>
-                        </div>
-                        <div class="mb-3">
-                            <label for="email" class="form-label">Email Address</label>
-                            <input type="email" class="form-control" id="email" name="email" required>
-                        </div>
-                        <div class="mb-3">
-                            <label for="phone" class="form-label">Phone Number</label>
-                            <input type="text" class="form-control" id="phone" name="phone" placeholder="07XXXXXXXX">
-                            <div class="form-text">A valid phone number is required for payment processing.</div>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Select a Plan</label>
-                            <div class="row">
-                                {% for plan_name, plan in pricing_plans.items() %}
-                                <div class="col-md-4 mb-3">
-                                    <div class="card h-100">
-                                        <div class="card-header {% if plan_name == 'Premium' %}bg-success text-white{% elif plan_name == 'Basic' %}bg-info text-white{% else %}bg-light{% endif %}">
-                                            <h5 class="card-title text-center mb-0">{{ plan_name }}</h5>
-                                        </div>
-                                        <div class="card-body">
-                                            <h3 class="text-center mb-3">
-                                                {% if plan.price == 0 %}Free{% else %}${{ plan.price }}{% endif %}
-                                            </h3>
-                                            <ul class="list-unstyled">
-                                                <li><i class="fas fa-check text-success me-2"></i> {{ plan.word_limit }} words</li>
-                                                <li><i class="fas fa-check text-success me-2"></i> AI detection</li>
-                                                <li><i class="fas fa-check text-success me-2"></i> Text humanizing</li>
-                                            </ul>
-                                        </div>
-                                        <div class="card-footer bg-white border-top-0">
-                                            <div class="form-check">
-                                                <input class="form-check-input" type="radio" name="plan_type" id="plan_{{ plan_name }}" value="{{ plan_name }}" {% if plan_name == 'Free' %}checked{% endif %}>
-                                                <label class="form-check-label" for="plan_{{ plan_name }}">
-                                                    Select {{ plan_name }} Plan
-                                                </label>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                {% endfor %}
-                            </div>
-                        </div>
-                        
-                        <div class="d-grid">
-                            <button type="submit" class="btn btn-primary">Register</button>
-                        </div>
-                    </form>
-                    <div class="mt-3 text-center">
-                        <p>Already have an account? <a href="{{ url_for('login') }}">Login</a></p>
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h2 class="card-title h5 mb-0">Create a New Account</h2>
+            </div>
+            <div class="card-body">
+                <form method="post" action="{{ url_for('register') }}">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Username</label>
+                        <input type="text" class="form-control" id="username" name="username" required>
                     </div>
-                </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Password</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="phone" class="form-label">Phone Number (for M-PESA payments)</label>
+                        <input type="text" class="form-control" id="phone" name="phone" placeholder="07XXXXXXXX" required>
+                    </div>
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">Register</button>
+                    </div>
+                </form>
+            </div>
+            <div class="card-footer text-center">
+                <p class="mb-0">Already have an account? <a href="{{ url_for('login') }}">Login</a></p>
             </div>
         </div>
     </div>
 </div>
-
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    // Format phone number when user leaves the field
-    var phoneField = document.getElementById('phone');
-    if (phoneField) {
-        phoneField.addEventListener('blur', function() {
-            let phone = this.value.trim();
-            
-            // Remove non-digit characters
-            phone = phone.replace(/\D/g, '');
-            
-            // Format based on common patterns
-            if (phone.startsWith('254') && phone.length > 9) {
-                // Convert from 254XXXXXXXXX to 07XXXXXXXX
-                phone = '0' + phone.substring(3);
-            } else if (!phone.startsWith('0') && phone.length > 8) {
-                // Add leading 0 if missing
-                phone = '0' + phone;
-            }
-            
-            // Ensure it's exactly 10 digits (07XXXXXXXX)
-            if (phone.length > 10) {
-                phone = phone.substring(0, 10);
-            }
-            
-            // Update the field
-            this.value = phone;
-        });
-    }
-});
-</script>
 {% endblock %}
