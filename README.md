@@ -1,110 +1,46 @@
-# Andikar AI - Version 2.0 Frontend
+# Andikar AI Backend v2.2
 
-Version 2.0 frontend of Andikar AI Flask frontend application for humanizing AI-generated text with MongoDB integration and payment processing.
+Backend service for the Andikar AI Frontend application, designed to humanize AI-generated text.
 
-## New Features
+## Features
 
-- **MongoDB Integration**: Replaced CSV-based storage with MongoDB
-- **Payment Processing**: Integrated with Lipia payment API for subscription management
-- **Word Credits System**: Track and manage word usage with a credit-based system
-- **RESTful API Endpoints**: Added API endpoints for external integration
+- User registration and authentication
+- Text humanization API
+- MongoDB integration for data storage
 
-## Environment Variables
+## Requirements
 
-The application uses the following environment variables:
+- Python 3.8+
+- MongoDB
 
-```
-SECRET_KEY=your_secret_key
-MONGO_URL=mongodb://username:password@host:port/database
-HUMANIZER_API_URL=https://your-humanizer-api.example.com
-ADMIN_API_URL=https://your-admin-api.example.com
-LIPIA_API_URL=https://lipia-api.kreativelabske.com/api
-LIPIA_API_KEY=your_lipia_api_key
-```
+## Configuration
 
-## MongoDB Setup
+The application uses environment variables for configuration:
 
-The application uses MongoDB for data storage. Make sure you have MongoDB instance running and configure the MONGO_URL environment variable.
-
-### MongoDB Collections
-
-- **users**: User account information and subscription details
-- **payments**: Payment records and transaction history
-- **transactions**: Detailed transaction processing data
-
-## Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/pkkmi/version-2.0-frontend.git
-cd version-2.0-frontend
-```
-
-2. Create a virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-4. Set up environment variables (create .env file based on .env.example)
-
-5. Run the application:
-```bash
-python app.py
-```
+- `MONGODB_URI`: MongoDB connection string
+- `SECRET_KEY`: Secret key for JWT encoding
+- `HUMANIZER_API_URL`: URL for humanizer API service
+- `PORT`: Port for the application to run on (default: 5000)
 
 ## API Endpoints
-
-The application provides the following API endpoints:
 
 ### Authentication
 
 - `POST /api/register`: Register a new user
-- `POST /api/login`: Log in a user
-- `POST /api/logout`: Log out the current user
-- `GET /api/user`: Get current user data
-- `POST /api/user/update`: Update user data
-- `POST /api/user/consume-words`: Consume words from user's account
+  - Request: `{ "username": "user", "email": "user@example.com", "password": "password" }`
+  - Response: `{ "success": true, "message": "User registered successfully", "user_id": "id" }`
 
-### Payment Processing
+- `POST /api/login`: Login and get JWT token
+  - Request: `{ "username": "user", "password": "password" }`
+  - Response: `{ "success": true, "message": "Login successful", "user": {...}, "access_token": "token" }`
 
-- `POST /payment/initiate`: Initiate a payment
-- `POST /payment/callback`: Handle payment callback from payment provider
-- `GET /payment/check/<checkout_id>`: Check payment status
+### Humanization
 
-## Architecture
+- `POST /api/humanize`: Humanize text (requires JWT token)
+  - Request: `{ "text": "Text to humanize" }`
+  - Response: `{ "success": true, "message": "Text humanized successfully", "humanized_text": "Humanized text", "user": {...} }`
 
-The application consists of the following components:
+### System
 
-1. **app.py**: Main application file with routes and Flask setup
-2. **models.py**: MongoDB models and data access functions
-3. **auth.py**: Authentication routes and user management
-4. **payment.py**: Payment processing and subscription management
-5. **utils.py**: Utility functions for text processing and API integration
-6. **templates.py**: HTML templates for the web interface
-7. **config.py**: Application configuration and pricing plans
-
-## Subscription Plans
-
-The application offers the following subscription plans:
-
-- **Free**: 500 words per round (KES 0)
-- **Basic**: 1,500 words per round (KES 500)
-- **Premium**: 8,000 words per round (KES 2,000)
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch: `git checkout -b feature/my-new-feature`
-3. Commit your changes: `git commit -am 'Add some feature'`
-4. Push to the branch: `git push origin feature/my-new-feature`
-5. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+- `GET /api/status`: Check API status
+  - Response: `{ "status": "online", "humanizer_api": "online" }`

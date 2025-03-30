@@ -1,21 +1,30 @@
-# App name
-APP_NAME = "Andikar AI"
+import os
 
-# Pricing plans
-pricing_plans = {
-    "Free": {
-        "price": 0,  # KES
-        "word_limit": 500,
-        "description": "Free tier with 500 words per round"
-    },
-    "Basic": {
-        "price": 500,  # KES
-        "word_limit": 1500,
-        "description": "Basic plan with 1,500 words per round"
-    },
-    "Premium": {
-        "price": 2000,  # KES
-        "word_limit": 8000,
-        "description": "Premium plan with 8,000 words per round"
+class Config:
+    # MongoDB Configuration
+    MONGO_URI = os.environ.get('MONGODB_URI', 'mongodb://localhost:27017/andikar')
+    
+    # JWT Secret Key
+    SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key')
+    
+    # Humanizer API
+    HUMANIZER_API_URL = os.environ.get('HUMANIZER_API_URL', 'https://api.example.com/humanize')
+    
+    # User Plans
+    PLANS = {
+        'free': {
+            'name': 'Free',
+            'words_limit': 500,
+            'price': 0
+        },
+        'basic': {
+            'name': 'Basic',
+            'words_limit': 1500,
+            'price': 500
+        },
+        'premium': {
+            'name': 'Premium',
+            'words_limit': 8000,
+            'price': 2000
+        }
     }
-}
