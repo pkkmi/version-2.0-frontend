@@ -7,6 +7,7 @@ import os
 import requests
 from functools import wraps
 import logging
+import signal
 
 from config import APP_NAME, pricing_plans
 from models import users_db, transactions_db, init_mongo, get_user, update_word_count, get_user_payments, mongo_connected
@@ -23,16 +24,31 @@ logging.basicConfig(level=logging.INFO)
 logger = app.logger
 logger.info("Starting application...")
 
-# MongoDB configuration
+# MongoDB configuration - use the public URL
 app.config['MONGO_URI'] = os.environ.get(
-    'MONGO_URL', 
-    'mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@mongodb.railway.internal:27017/lipia'
+    'MONGO_PUBLIC_URL', 
+    'mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@metro.proxy.rlwy.net:52335/lipia'
 )
 logger.info(f"MongoDB URI: {app.config['MONGO_URI']}")
 
+# Set up timeout handler for Flask
+def timeout_handler(signum, frame):
+    logger.error("Request timed out")
+    raise TimeoutError("Request timed out")
+
+# Set a 30-second timeout for requests
+signal.signal(signal.SIGALRM, timeout_handler)
+
 # Initialize MongoDB with fallback to in-memory if connection fails
-mongo = init_mongo(app)
-logger.info(f"MongoDB connected: {mongo_connected}")
+try:
+    signal.alarm(5)  # 5-second timeout for MongoDB initialization
+    mongo = init_mongo(app)
+    signal.alarm(0)  # Cancel the alarm
+    logger.info(f"MongoDB connected: {mongo_connected}")
+except Exception as e:
+    signal.alarm(0)  # Cancel the alarm
+    logger.error(f"Error initializing MongoDB: {e}")
+    logger.warning("Continuing with in-memory storage")
 
 # Register blueprints
 try:
@@ -423,7 +439,8 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.datetime.now().isoformat(),
-        "storage": "MongoDB" if mongo_connected else "In-memory"
+        "storage": "MongoDB" if mongo_connected else "In-memory",
+        "mongo_url": app.config['MONGO_URI']
     })
 
 
@@ -438,6 +455,7 @@ def api_test():
         "tests": [],
         "storage": "MongoDB" if mongo_connected else "In-memory fallback",
         "mongodb_uri": app.config['MONGO_URI'],
+        "app_version": "2.1.0 - Hybrid Storage"
     }
     
     # Test 1: Check the root endpoint
