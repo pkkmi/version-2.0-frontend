@@ -1,6 +1,34 @@
 # Andikar AI - Version 2.0 Frontend
 
-Version 2.0 frontend of Andikar AI Flask frontend application for humanizing AI-generated text with MongoDB persistence and payment processing.
+Version 2.0 frontend of Andikar AI Flask frontend application for humanizing AI-generated text with MongoDB persistence and enhanced payment processing.
+
+## Payment System Enhancements
+
+The application now features an enhanced payment system with:
+
+1. **Dual Payment Methods**:
+   - Direct M-PESA integration with immediate STK push
+   - External payment page with verification flow
+
+2. **Real-time Payment Tracking**:
+   - Background callback processing
+   - Live payment status updates
+   - Automatic word credit updates on successful payment
+
+3. **Improved Phone Number Handling**:
+   - Automatic phone number formatting
+   - Support for multiple formats (07XXXXXXXX, 254XXXXXXXXX)
+   - Client-side validation
+
+4. **Robust Error Handling**:
+   - Graceful fallback to manual processing
+   - Detailed error logging
+   - User-friendly error messages
+
+5. **Transaction Management**:
+   - MongoDB persistence with in-memory fallback
+   - Detailed transaction records
+   - Payment history in user account
 
 ## MongoDB Connection Fix
 
@@ -168,6 +196,8 @@ The application provides the following API endpoints:
 - `POST /payment/initiate`: Initiate a payment
 - `POST /payment/callback`: Handle payment callback from payment provider
 - `GET /payment/check/<checkout_id>`: Check payment status
+- `POST /payment/validate-phone`: Validate phone number format
+- `POST /payment/cancel/<checkout_id>`: Cancel a pending payment
 
 ## Diagnostics
 
