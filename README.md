@@ -1,93 +1,92 @@
 # Andikar AI - Version 2.0 Frontend
 
-Version 2.0 frontend of Andikar AI Flask frontend application for humanizing AI-generated text with MongoDB persistence and enhanced payment processing.
+Version 2.0 frontend of Andikar AI Flask frontend application for humanizing AI-generated text with MongoDB Atlas persistence and enhanced payment processing.
 
-## Payment System Enhancements
+## Latest Updates
+
+### MongoDB Atlas Integration
+- Now exclusively using MongoDB Atlas for persistent data storage
+- Removed Railway MongoDB references
+- Improved connection and authentication handling
+
+### Revised Pricing Plans
+- **Free**: 500 words per round ($0)
+- **Basic**: 1,500 words per round ($20)
+- **Premium**: 8,000 words per round ($30)
+
+### Streamlined Payment System
+- Single payment point under the Pricing page
+- Integrated payment options directly in the pricing UI
+- Clearer payment status indicators throughout the application
+- Automatic processing for free plans
+
+## Payment System Features
 
 The application now features an enhanced payment system with:
 
-1. **Dual Payment Methods**:
-   - Direct M-PESA integration with immediate STK push
-   - External payment page with verification flow
+1. **Consolidated Payment Flow**:
+   - All payment options accessible from Pricing page
+   - Modal-based payment interface
+   - Clear status indicators
 
-2. **Real-time Payment Tracking**:
+2. **Multiple Payment Options**:
+   - Direct payment with phone number input
+   - External payment page with verification
+
+3. **Real-time Payment Tracking**:
    - Background callback processing
    - Live payment status updates
    - Automatic word credit updates on successful payment
 
-3. **Improved Phone Number Handling**:
+4. **Improved Phone Number Handling**:
    - Automatic phone number formatting
    - Support for multiple formats (07XXXXXXXX, 254XXXXXXXXX)
    - Client-side validation
 
-4. **Robust Error Handling**:
+5. **Robust Error Handling**:
    - Graceful fallback to manual processing
    - Detailed error logging
    - User-friendly error messages
 
-5. **Transaction Management**:
-   - MongoDB persistence with in-memory fallback
+6. **Transaction Management**:
+   - MongoDB Atlas persistence with in-memory fallback
    - Detailed transaction records
    - Payment history in user account
-
-## MongoDB Connection Fix
-
-The application has been updated to fix MongoDB connection issues on Railway. Key improvements include:
-
-1. **Correct Connection String Format**:
-   - Added `authSource=admin` parameter to MongoDB connection string
-   - Properly formatted database name in URI
-   - Support for both internal and external connection methods
-
-2. **Robust Connection Handling**:
-   - Tries both internal and external connections
-   - Graceful fallback to in-memory storage if MongoDB is unavailable
-   - Background reconnection attempts with retry logic
-
-3. **Proper Authentication**:
-   - Ensures the authentication database is correctly specified
 
 ## Architecture
 
 This application uses a hybrid storage approach:
 
-- **Primary Storage**: MongoDB for persistent data storage
+- **Primary Storage**: MongoDB Atlas for persistent data storage
 - **Fallback Storage**: In-memory backup when MongoDB is unavailable
 - **Data Synchronization**: Automatic syncing from in-memory to MongoDB when connection is established
 - **Background Reconnection**: Continuous attempts to reconnect to MongoDB
 
 ## Key Features
 
-- **MongoDB Integration**: Persistent storage using MongoDB
+- **MongoDB Atlas Integration**: Persistent storage using MongoDB Atlas
 - **Payment Processing**: Integration with Lipia payment API with fallback mechanisms
 - **Word Credits System**: Track and manage word usage with a credit-based system
 - **Resilient Operation**: Application works even when MongoDB is temporarily unavailable
-- **Real-time Status**: Dashboard shows current storage type (MongoDB or In-memory)
+- **User-Friendly Interface**: Clear payment status and subscription information
 
 ## MongoDB Configuration
 
-This application supports a robust MongoDB connection with fallback to in-memory storage:
+This application supports a robust MongoDB Atlas connection with fallback to in-memory storage:
 
 - **Connection Timeouts**: Short timeouts prevent application hangs (15 seconds)
 - **Authentication Support**: Uses MongoDB authentication with username/password
 - **Automatic Reconnection**: Background thread attempts reconnection every 10 seconds
 - **Index Creation**: Creates necessary indexes when connection is established
 - **Data Synchronization**: In-memory data is synced to MongoDB when reconnected
-- **Status Indication**: Dashboard displays current storage type
 
-## MongoDB Connection Strings
+## MongoDB Connection String
 
-The application uses two MongoDB connection strings:
+The application uses the MongoDB Atlas connection string:
 
-1. **Internal Connection** (preferred for service-to-service communication):
-   ```
-   mongodb://mongo:password@mongodb.railway.internal:27017/lipia?authSource=admin
-   ```
-
-2. **External Connection** (backup if internal fails):
-   ```
-   mongodb://mongo:password@metro.proxy.rlwy.net:52335/lipia?authSource=admin
-   ```
+```
+mongodb+srv://edgarmaina003:Andikar_25@oldtrafford.id96k.mongodb.net/lipia?retryWrites=true&w=majority&appName=OldTrafford
+```
 
 ## Payment System
 
@@ -117,8 +116,7 @@ HUMANIZER_API_URL=https://web-production-3db6c.up.railway.app
 ADMIN_API_URL=https://railway-test-api-production.up.railway.app
 
 # MongoDB connection
-MONGO_URI=mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@mongodb.railway.internal:27017/lipia?authSource=admin
-MONGO_EXTERNAL_URI=mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@metro.proxy.rlwy.net:52335/lipia?authSource=admin
+MONGO_URI=mongodb+srv://edgarmaina003:Andikar_25@oldtrafford.id96k.mongodb.net/lipia?retryWrites=true&w=majority&appName=OldTrafford
 MONGO_DBNAME=lipia
 MONGO_RETRY_DELAY=10
 MONGO_TIMEOUT=15
@@ -208,9 +206,9 @@ The application provides the following API endpoints:
 
 The application offers the following subscription plans:
 
-- **Free**: 500 words per round (KES 0)
-- **Basic**: 1,500 words per round (KES 500)
-- **Premium**: 8,000 words per round (KES 2,000)
+- **Free**: 500 words per round ($0)
+- **Basic**: 1,500 words per round ($20)
+- **Premium**: 8,000 words per round ($30)
 
 ## Demo Account
 
@@ -226,31 +224,24 @@ This account has the Basic plan with 1,375 remaining words.
 If you're having issues with MongoDB connectivity:
 
 1. **Check Connection String Format**: 
-   - Ensure the MongoDB URI includes `?authSource=admin`
    - Verify the database name is included in the URI
 
-2. **Try Internal vs External URLs**:
-   - Internal: `mongodb://user:pass@mongodb.railway.internal:27017/dbname?authSource=admin`
-   - External: `mongodb://user:pass@metro.proxy.rlwy.net:port/dbname?authSource=admin`
-
-3. **Check Logs for Specific Errors**:
+2. **Check Logs for Specific Errors**:
    - "Authentication failed" - Check credentials
    - "Connection reset by peer" - Network connectivity issues
-   - "Cannot connect to MongoDB" - Check MongoDB service status
+   - "Cannot connect to MongoDB" - Check MongoDB Atlas service status
 
-4. **Verify Environment Variables**:
-   - `MONGO_URI` - Primary connection string
-   - `MONGO_EXTERNAL_URI` - Backup connection string
+3. **Verify Environment Variables**:
+   - `MONGO_URI` - Connection string
    - `MONGO_TIMEOUT` - Connection timeout in seconds
 
-5. **Check MongoDB Service**:
-   - Verify MongoDB service is running in Railway
-   - Check for any restarts or network issues
+4. **Check MongoDB Atlas Service**:
+   - Verify MongoDB Atlas service is running
+   - Check for any service outages
 
-6. **Other MongoDB Troubleshooting**:
-   - Try connecting with MongoDB Compass using the external URL
+5. **Other MongoDB Troubleshooting**:
+   - Try connecting with MongoDB Compass using the connection string
    - Run `mongosh` command with the MongoDB URL to test direct connectivity
-   - Check Railway logs for MongoDB service
 
 ## Security Notes
 
