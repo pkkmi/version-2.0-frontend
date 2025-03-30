@@ -29,7 +29,7 @@ logging.basicConfig(level=logging.INFO)
 logger = app.logger
 logger.info("Starting application...")
 
-# MongoDB configuration - use the configured URI (MongoDB Atlas as primary)
+# MongoDB configuration - use MongoDB Atlas
 mongo_uri = os.environ.get('MONGO_URI', 'mongodb+srv://edgarmaina003:Andikar_25@oldtrafford.id96k.mongodb.net/lipia?retryWrites=true&w=majority&appName=OldTrafford')
 
 # Make sure the DB name is included
@@ -40,12 +40,12 @@ elif f'/{dbname}' not in mongo_uri:
     mongo_uri = f"{mongo_uri}/{dbname}"
 
 app.config['MONGO_URI'] = mongo_uri
-logger.info(f"MongoDB URI: {mongo_uri}")
+logger.info(f"MongoDB URI: {mongo_uri.replace('Andikar_25', '***')}")
 
 # Initialize MongoDB with fallback to in-memory if connection fails
 try:
     mongo = init_mongo(app)
-    logger.info(f"MongoDB connected: True")
+    logger.info(f"MongoDB connected: {mongo_connected}")
     
     # Force the mongo_connected flag to be True for the UI
     import importlib
@@ -236,7 +236,9 @@ def humanize():
             else:
                 message = f"Not enough words remaining. You have {words_remaining} words left, but this text has {word_count} words."
         else:
-            message = "Payment required to access this feature. Please upgrade your plan."
+            message = "Payment required to access this feature. Please upgrade your plan on the Pricing page."
+            flash('Please complete payment to access premium features', 'warning')
+            return redirect(url_for('pricing'))
 
     return render_template_string(html_templates['humanize.html'],
                                   message=message,
@@ -267,7 +269,9 @@ def detect():
         if not payment_required:
             result = detect_ai_content(text)
         else:
-            message = "Payment required to access this feature. Please upgrade your plan."
+            message = "Payment required to access this feature. Please upgrade your plan on the Pricing page."
+            flash('Please complete payment to access premium features', 'warning')
+            return redirect(url_for('pricing'))
 
     return render_template_string(html_templates['detect.html'],
                                   result=result,
@@ -355,10 +359,22 @@ def download():
     return render_template_string(html_templates['download.html'])
 
 
-@app.route('/pricing')
+@app.route('/pricing', methods=['GET', 'POST'])
 @login_required
 def pricing():
-    return render_template_string(html_templates['pricing.html'], pricing_plans=pricing_plans)
+    # Get user data
+    user = get_user(session['user_id'])
+    if not user:
+        flash('User not found', 'error')
+        return redirect(url_for('login'))
+    
+    current_plan = user.get('plan', 'Free')
+    payment_status = user.get('payment_status', 'Pending')
+    
+    return render_template_string(html_templates['pricing.html'], 
+                                 pricing_plans=pricing_plans,
+                                 current_plan=current_plan,
+                                 payment_status=payment_status)
 
 
 @app.route('/payment', methods=['GET', 'POST'])
@@ -369,6 +385,11 @@ def payment():
     if not user:
         flash('User not found', 'error')
         return redirect(url_for('login'))
+    
+    # Check if payment is needed
+    if user.get('payment_status') == 'Paid':
+        flash('Your account is already paid and active', 'info')
+        return redirect(url_for('dashboard'))
     
     if request.method == 'POST':
         phone_number = request.form['phone_number']
@@ -395,7 +416,7 @@ def payment():
             if response.get('status') == 'success':
                 # Payment immediately succeeded
                 words_added = response.get('words_added', 0)
-                flash(f'Payment of KES {amount} processed successfully. {words_added} words have been added to your account.', 'success')
+                flash(f'Payment of ${amount} processed successfully. {words_added} words have been added to your account.', 'success')
                 return redirect(url_for('account'))
             elif response.get('status') == 'pending':
                 # Payment initiated, show payment waiting screen
@@ -444,7 +465,7 @@ def upgrade():
             'payment_status': 'Pending'
         })
         
-        flash(f'Your plan has been upgraded to {new_plan}. Please make payment to activate.', 'success')
+        flash(f'Your plan has been upgraded to {new_plan}. Please complete payment to activate.', 'success')
         return redirect(url_for('payment'))
 
     available_plans = {k: v for k, v in pricing_plans.items() if k != current_plan}
@@ -467,10 +488,10 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.datetime.now().isoformat(),
-        "storage": "MongoDB",
+        "storage": "MongoDB Atlas",
         "mongo_uri": app.config['MONGO_URI'].replace("Andikar_25", "***"),  # Hide password
         "version": "2.2.0",
-        "mongodb_connected": True
+        "mongodb_connected": mongo_connected
     })
 
 
@@ -483,7 +504,7 @@ def api_test():
     results = {
         "api_url": api_url,
         "tests": [],
-        "storage": "MongoDB",
+        "storage": "MongoDB Atlas",
         "mongodb_uri": app.config['MONGO_URI'].replace("Andikar_25", "***"),  # Hide password
         "app_version": "2.2.0 - MongoDB Atlas"
     }
@@ -505,7 +526,7 @@ def api_test():
         })
         
     # Test MongoDB connection
-    results["mongodb_connected"] = True
+    results["mongodb_connected"] = mongo_connected
         
     # Overall status
     results["overall_success"] = True
@@ -560,8 +581,8 @@ html_templates['payment_waiting.html'] = """
             <h2>Payment In Progress</h2>
         </div>
         <div class="card-body">
-            <p>An M-PESA payment request has been sent to your phone ({{ phone }}).</p>
-            <p>Please check your phone and approve the payment of KES {{ amount }}.</p>
+            <p>A payment request has been sent to your phone ({{ phone }}).</p>
+            <p>Please check your phone and approve the payment of ${{ amount }}.</p>
             <p>This page will automatically update when the payment is complete.</p>
             <p>Transaction ID: {{ checkout_id }}</p>
             <div id="payment-status">Waiting for payment...</div>
@@ -624,11 +645,11 @@ document.getElementById('cancel-payment').addEventListener('click', function() {
         }
     })
     .then(() => {
-        window.location.href = '/account';
+        window.location.href = '/pricing';
     })
     .catch(error => {
         console.error('Error cancelling payment:', error);
-        window.location.href = '/account';
+        window.location.href = '/pricing';
     });
 });
 </script>
@@ -672,10 +693,10 @@ if __name__ == '__main__':
     
     port = int(os.environ.get('PORT', 8080))
     logger.info(f"Starting {APP_NAME} server on port {port}...")
-    logger.info(f"MongoDB connected: True")
+    logger.info(f"MongoDB connected: {mongo_connected}")
     logger.info("Available plans:")
     for plan, details in pricing_plans.items():
-        logger.info(f"  - {plan}: {details['word_limit']} words per round (KES {details['price']})")
+        logger.info(f"  - {plan}: {details['word_limit']} words per round (${details['price']})")
     logger.info("Demo account:")
     logger.info("  Username: demo")
     logger.info("  Password: demo")
