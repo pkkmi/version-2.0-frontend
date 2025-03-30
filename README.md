@@ -2,6 +2,23 @@
 
 Version 2.0 frontend of Andikar AI Flask frontend application for humanizing AI-generated text with MongoDB persistence and payment processing.
 
+## MongoDB Connection Fix
+
+The application has been updated to fix MongoDB connection issues on Railway. Key improvements include:
+
+1. **Correct Connection String Format**:
+   - Added `authSource=admin` parameter to MongoDB connection string
+   - Properly formatted database name in URI
+   - Support for both internal and external connection methods
+
+2. **Robust Connection Handling**:
+   - Tries both internal and external connections
+   - Graceful fallback to in-memory storage if MongoDB is unavailable
+   - Background reconnection attempts with retry logic
+
+3. **Proper Authentication**:
+   - Ensures the authentication database is correctly specified
+
 ## Architecture
 
 This application uses a hybrid storage approach:
@@ -23,12 +40,26 @@ This application uses a hybrid storage approach:
 
 This application supports a robust MongoDB connection with fallback to in-memory storage:
 
-- **Connection Timeouts**: Short timeouts prevent application hangs (3-5 seconds)
+- **Connection Timeouts**: Short timeouts prevent application hangs (15 seconds)
 - **Authentication Support**: Uses MongoDB authentication with username/password
 - **Automatic Reconnection**: Background thread attempts reconnection every 10 seconds
 - **Index Creation**: Creates necessary indexes when connection is established
 - **Data Synchronization**: In-memory data is synced to MongoDB when reconnected
 - **Status Indication**: Dashboard displays current storage type
+
+## MongoDB Connection Strings
+
+The application uses two MongoDB connection strings:
+
+1. **Internal Connection** (preferred for service-to-service communication):
+   ```
+   mongodb://mongo:password@mongodb.railway.internal:27017/lipia?authSource=admin
+   ```
+
+2. **External Connection** (backup if internal fails):
+   ```
+   mongodb://mongo:password@metro.proxy.rlwy.net:52335/lipia?authSource=admin
+   ```
 
 ## Payment System
 
@@ -58,10 +89,11 @@ HUMANIZER_API_URL=https://web-production-3db6c.up.railway.app
 ADMIN_API_URL=https://railway-test-api-production.up.railway.app
 
 # MongoDB connection
-MONGO_URI=mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@metro.proxy.rlwy.net:52335/lipia
+MONGO_URI=mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@mongodb.railway.internal:27017/lipia?authSource=admin
+MONGO_EXTERNAL_URI=mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@metro.proxy.rlwy.net:52335/lipia?authSource=admin
 MONGO_DBNAME=lipia
 MONGO_RETRY_DELAY=10
-MONGO_TIMEOUT=3
+MONGO_TIMEOUT=15
 MONGO_TEST_ON_STARTUP=true
 MONGO_FALLBACK_TO_MEMORY=true
 
@@ -159,35 +191,36 @@ A demo account is available for testing:
 
 This account has the Basic plan with 1,375 remaining words.
 
-## Troubleshooting
+## Troubleshooting MongoDB Connections
 
-### MongoDB Connection Issues
+If you're having issues with MongoDB connectivity:
 
-If MongoDB connection fails:
+1. **Check Connection String Format**: 
+   - Ensure the MongoDB URI includes `?authSource=admin`
+   - Verify the database name is included in the URI
 
-1. Check that your MongoDB credentials are correct in the `.env` file
-2. Make sure the MongoDB URI format includes the database name: `mongodb://user:pass@host:port/lipia`
-3. Verify network connectivity to the MongoDB server
-4. Check MongoDB logs for authentication failures
-5. The application will automatically fall back to in-memory storage if enabled
+2. **Try Internal vs External URLs**:
+   - Internal: `mongodb://user:pass@mongodb.railway.internal:27017/dbname?authSource=admin`
+   - External: `mongodb://user:pass@metro.proxy.rlwy.net:port/dbname?authSource=admin`
 
-### MongoDB Status Monitoring
+3. **Check Logs for Specific Errors**:
+   - "Authentication failed" - Check credentials
+   - "Connection reset by peer" - Network connectivity issues
+   - "Cannot connect to MongoDB" - Check MongoDB service status
 
-You can monitor the MongoDB connection status in two ways:
+4. **Verify Environment Variables**:
+   - `MONGO_URI` - Primary connection string
+   - `MONGO_EXTERNAL_URI` - Backup connection string
+   - `MONGO_TIMEOUT` - Connection timeout in seconds
 
-1. Check the application logs for MongoDB connection messages
-2. Visit the `/health` endpoint to see the current MongoDB connection status
-3. Look at the dashboard page where it shows "Storage: MongoDB" or "Storage: In-memory"
+5. **Check MongoDB Service**:
+   - Verify MongoDB service is running in Railway
+   - Check for any restarts or network issues
 
-### Payment Issues
-
-If payment processing fails:
-
-1. Check the Lipia API key in the environment variables
-2. Verify the payment URL is correct
-3. Check network connectivity to the payment API
-4. Look for error messages in the application logs
-5. The application will automatically fall back to manual payment processing
+6. **Other MongoDB Troubleshooting**:
+   - Try connecting with MongoDB Compass using the external URL
+   - Run `mongosh` command with the MongoDB URL to test direct connectivity
+   - Check Railway logs for MongoDB service
 
 ## Security Notes
 
