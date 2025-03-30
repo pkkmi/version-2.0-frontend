@@ -20,28 +20,25 @@ def retry_mongo_connection(app):
     while not mongo_connected:
         try:
             app.logger.info("Attempting to reconnect to MongoDB...")
-            # Test connection with a short timeout
+            
+            # Test connection
+            mongo.db.command('ping')
+            mongo_connected = True
+            app.logger.info("Successfully reconnected to MongoDB!")
+            
+            # Create indexes when connected
             try:
-                # Don't use signals in thread
-                mongo.db.command('ping', maxTimeMS=3000)
-                mongo_connected = True
-                app.logger.info("Successfully reconnected to MongoDB!")
-                
-                # Create indexes when connected
-                try:
-                    mongo.db.users.create_index("username", unique=True)
-                    mongo.db.payments.create_index("checkout_id", unique=True)
-                    mongo.db.transactions.create_index([("username", 1), ("timestamp", -1)])
-                    app.logger.info("MongoDB indexes created successfully")
-                except Exception as e:
-                    app.logger.error(f"Error creating MongoDB indexes: {e}")
-                    
-                # Sync in-memory data to MongoDB
-                sync_memory_to_mongo(app)
+                mongo.db.users.create_index("username", unique=True)
+                mongo.db.payments.create_index("checkout_id", unique=True)
+                mongo.db.transactions.create_index([("username", 1), ("timestamp", -1)])
+                app.logger.info("MongoDB indexes created successfully")
             except Exception as e:
-                app.logger.warning(f"MongoDB ping failed: {e}")
+                app.logger.error(f"Error creating MongoDB indexes: {e}")
+                
+            # Sync in-memory data to MongoDB
+            sync_memory_to_mongo(app)
         except Exception as e:
-            app.logger.warning(f"MongoDB reconnection failed: {e}")
+            app.logger.warning(f"MongoDB reconnection failed: {str(e)}")
             
         # Wait before trying again
         time.sleep(10)
@@ -124,45 +121,47 @@ def init_mongo(app):
     global mongo_connected, mongo_retry_thread
     
     try:
-        # Use the external MongoDB URL instead of internal
-        if 'MONGO_URI' in app.config:
-            # Check if we're using internal URL
-            if 'mongodb.railway.internal' in app.config['MONGO_URI']:
-                # Try to fix database name
-                if '/lipia' not in app.config['MONGO_URI'] and not app.config['MONGO_URI'].endswith('/'):
-                    app.config['MONGO_URI'] += '/lipia'
-                
-                # Switch to external URL if available
-                if 'MONGO_PUBLIC_URL' in app.config:
-                    app.config['MONGO_URI'] = app.config['MONGO_PUBLIC_URL']
-                    app.logger.info(f"Using MongoDB external URL: {app.config['MONGO_URI']}")
-                    
-                    # Ensure database name is included
-                    if '/lipia' not in app.config['MONGO_URI'] and not app.config['MONGO_URI'].endswith('/'):
-                        app.config['MONGO_URI'] += '/lipia'
-        
-        # Clean URL for logging
-        clean_url = app.config['MONGO_URI'].replace(
-            app.config.get('MONGO_INITDB_ROOT_PASSWORD', 'password'), 
-            '****'
-        )
-        app.logger.info(f"Using MongoDB URI: {clean_url}")
+        # Fix the MongoDB URI to match Railway's format - Database is lipia
+        mongo_uri = app.config.get('MONGO_URI', '')
+        if mongo_uri:
+            # Make sure we have the database name
+            if not mongo_uri.endswith('/lipia') and not '?authSource=' in mongo_uri:
+                if '?' in mongo_uri:
+                    mongo_uri = mongo_uri.replace('?', '/lipia?')
+                else:
+                    mongo_uri = mongo_uri + '/lipia'
+                # Update the config
+                app.config['MONGO_URI'] = mongo_uri
+                app.logger.info(f"Updated MongoDB URI: {mongo_uri}")
         
         # Set shorter connection timeouts
         app.config['MONGO_OPTIONS'] = {
-            'serverSelectionTimeoutMS': 3000,  # 3 seconds for server selection
-            'connectTimeoutMS': 3000,          # 3 seconds for connection
-            'socketTimeoutMS': 5000            # 5 seconds for socket operations
+            'serverSelectionTimeoutMS': 5000,  # 5 seconds for server selection
+            'connectTimeoutMS': 5000,          # 5 seconds for connection
+            'socketTimeoutMS': 10000           # 10 seconds for socket operations
         }
+        
+        # Try direct connection instead of PyMongo to verify credentials
+        import pymongo
+        try:
+            client = pymongo.MongoClient(app.config['MONGO_URI'], 
+                                        serverSelectionTimeoutMS=5000,
+                                        connectTimeoutMS=5000)
+            # Force connection
+            client.admin.command('ping')
+            app.logger.info("MongoDB direct connection test successful!")
+            client.close()
+        except Exception as e:
+            app.logger.warning(f"MongoDB direct connection test failed: {e}")
+            raise
         
         # Initialize MongoDB connection
         mongo.init_app(app)
         app.logger.info("Testing MongoDB connection...")
         
-        # Test connection with a timeout
+        # Test connection
         try:
-            # Use maxTimeMS instead of signals
-            mongo.db.command('ping', maxTimeMS=3000)
+            mongo.db.command('ping')
             mongo_connected = True
             app.logger.info("MongoDB connected successfully!")
             
