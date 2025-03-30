@@ -27,7 +27,7 @@ logging.basicConfig(level=logging.INFO)
 logger = app.logger
 logger.info("Starting application...")
 
-# MongoDB configuration - use the configured URI
+# MongoDB configuration - use the configured URI (MongoDB Atlas as primary)
 mongo_uri = os.environ.get('MONGO_URI', 'mongodb+srv://edgarmaina003:Andikar_25@oldtrafford.id96k.mongodb.net/lipia?retryWrites=true&w=majority&appName=OldTrafford')
 
 # Make sure the DB name is included
