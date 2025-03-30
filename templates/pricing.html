@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% block title %}Pricing Plans{% endblock %}
+{% block content %}
+<div class="container">
+    <h1 class="mb-4">Pricing Plans</h1>
+    
+    {% if current_plan %}
+    <div class="alert alert-info">
+        <p><strong>Your current plan:</strong> {{ current_plan }}</p>
+        <p><strong>Payment status:</strong> 
+            {% if payment_status == 'Paid' %}
+            <span class="badge bg-success">Paid</span>
+            {% else %}
+            <span class="badge bg-warning">Pending</span>
+            {% endif %}
+        </p>
+    </div>
+    {% endif %}
+    
+    <div class="row">
+        {% for plan_name, plan in pricing_plans.items() %}
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 {% if plan_name == current_plan %}border-primary{% endif %}">
+                <div class="card-header {% if plan_name == current_plan %}bg-primary text-white{% elif plan_name == 'Premium' %}bg-success text-white{% elif plan_name == 'Basic' %}bg-info text-white{% else %}bg-light{% endif %}">
+                    <h2 class="card-title">{{ plan_name }}</h2>
+                </div>
+                <div class="card-body d-flex flex-column">
+                    <h3 class="card-text pricing-price">
+                        {% if plan.price == 0 %}
+                            Free
+                        {% else %}
+                            ${{ plan.price }}
+                        {% endif %}
+                    </h3>
+                    <ul class="list-unstyled mt-4 mb-4">
+                        <li><i class="fas fa-check text-success"></i> {{ plan.word_limit }} words per round</li>
+                        <li><i class="fas fa-check text-success"></i> AI detection</li>
+                        <li><i class="fas fa-check text-success"></i> Humanize text</li>
+                        {% if plan_name != 'Free' %}
+                        <li><i class="fas fa-check text-success"></i> Priority support</li>
+                        {% endif %}
+                    </ul>
+                    <p class="card-text">{{ plan.description }}</p>
+                    
+                    <div class="mt-auto">
+                        {% if plan_name == current_plan %}
+                            {% if payment_status == 'Pending' %}
+                                <button type="button" class="btn btn-primary w-100" data-bs-toggle="modal" data-bs-target="#paymentModal" data-plan="{{ plan_name }}" data-price="{{ plan.price }}">
+                                    Complete Payment
+                                </button>
+                            {% else %}
+                                <button class="btn btn-outline-secondary w-100" disabled>Current Plan</button>
+                            {% endif %}
+                        {% else %}
+                            <form method="post" action="{{ url_for('upgrade') }}">
+                                <input type="hidden" name="new_plan" value="{{ plan_name }}">
+                                <button type="submit" class="btn btn-outline-primary w-100">
+                                    {% if plan.price > 0 %}
+                                        Select (${{ plan.price }})
+                                    {% else %}
+                                        Select (Free)
+                                    {% endif %}
+                                </button>
+                            </form>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <!-- Payment Modal -->
+    <div class="modal fade" id="paymentModal" tabindex="-1" aria-labelledby="paymentModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="paymentModalLabel">Complete Payment</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-primary text-white">
+                                    <h5 class="mb-0">Direct Payment</h5>
+                                </div>
+                                <div class="card-body">
+                                    <form id="directPaymentForm" method="post" action="{{ url_for('payment') }}">
+                                        <div class="mb-3">
+                                            <label for="phone_number" class="form-label">Phone Number</label>
+                                            <input type="text" class="form-control" id="phone_number" name="phone_number" required placeholder="07XXXXXXXX">
+                                            <div class="form-text">Enter your phone number to receive the payment request.</div>
+                                        </div>
+                                        <button type="submit" class="btn btn-primary w-100">Pay Now</button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-success text-white">
+                                    <h5 class="mb-0">External Payment</h5>
+                                </div>
+                                <div class="card-body">
+                                    <p>Visit our external payment page to complete your payment.</p>
+                                    <a href="{{ payment_url }}" target="_blank" class="btn btn-success w-100">Visit Payment Page</a>
+                                    <p class="mt-2 small">After payment, return to this page to confirm your payment.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4">
+                        <div class="card">
+                            <div class="card-header bg-info text-white">
+                                <h5 class="mb-0">Payment Summary</h5>
+                            </div>
+                            <div class="card-body">
+                                <table class="table table-striped">
+                                    <tr>
+                                        <th>Plan:</th>
+                                        <td id="modal-plan-name">{{ current_plan }}</td>
+                                    </tr>
+                                    <tr>
+                                        <th>Price:</th>
+                                        <td id="modal-plan-price">$0</td>
+                                    </tr>
+                                    <tr>
+                                        <th>Word Limit:</th>
+                                        <td>{{ pricing_plans[current_plan].word_limit }}</td>
+                                    </tr>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="mt-4">
+        <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Back to Dashboard</a>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Update payment modal with plan details
+    var paymentModal = document.getElementById('paymentModal');
+    if (paymentModal) {
+        paymentModal.addEventListener('show.bs.modal', function(event) {
+            var button = event.relatedTarget;
+            var plan = button.getAttribute('data-plan');
+            var price = button.getAttribute('data-price');
+            
+            // Update modal content
+            document.getElementById('modal-plan-name').textContent = plan;
+            document.getElementById('modal-plan-price').textContent = '$' + price;
+        });
+    }
+    
+    // Format phone number
+    var phoneField = document.getElementById('phone_number');
+    if (phoneField) {
+        phoneField.addEventListener('blur', function() {
+            let phone = this.value.trim();
+            
+            // Remove non-digit characters
+            phone = phone.replace(/\D/g, '');
+            
+            // Format based on common patterns
+            if (phone.startsWith('254') && phone.length > 9) {
+                // Convert from 254XXXXXXXXX to 07XXXXXXXX
+                phone = '0' + phone.substring(3);
+            } else if (!phone.startsWith('0') && phone.length > 8) {
+                // Add leading 0 if missing
+                phone = '0' + phone;
+            }
+            
+            // Format to match 07XXXXXXXX
+            if (phone.length > 10) {
+                phone = phone.substring(0, 10);
+            }
+            
+            // Update the field
+            this.value = phone;
+        });
+    }
+});
+</script>
+
+<style>
+.pricing-price {
+    font-size: 2.5rem;
+    text-align: center;
+    margin-bottom: 0;
+}
+
+.card-header h2 {
+    font-size: 1.75rem;
+    text-align: center;
+    margin: 0;
+}
+</style>
+{% endblock %}
