@@ -1,15 +1,23 @@
 # Andikar AI - Version 2.0 Frontend
 
-Version 2.0 frontend of Andikar AI Flask frontend application for humanizing AI-generated text with payment processing.
+Version 2.0 frontend of Andikar AI Flask frontend application for humanizing AI-generated text with MongoDB persistence and payment processing.
 
-## Current Setup
+## Architecture
 
-This version uses in-memory storage only (MongoDB is disabled) to ensure reliable operation. Key features include:
+This application uses a hybrid storage approach:
 
-- **In-Memory Data Storage**: Fast and reliable storage without external dependencies
-- **Manual Payment Processing**: Simple payment system that works without external APIs
+- **Primary Storage**: MongoDB for persistent data storage
+- **Fallback Storage**: In-memory backup when MongoDB is unavailable
+- **Data Synchronization**: Automatic syncing from in-memory to MongoDB when connection is established
+- **Background Reconnection**: Continuous attempts to reconnect to MongoDB
+
+## Key Features
+
+- **MongoDB Integration**: Persistent storage using MongoDB
+- **Payment Processing**: Integration with Lipia payment API with fallback mechanisms
 - **Word Credits System**: Track and manage word usage with a credit-based system
-- **RESTful API Endpoints**: API endpoints for external integration
+- **Resilient Operation**: Application works even when MongoDB is temporarily unavailable
+- **Real-time Status**: Dashboard shows current storage type (MongoDB or In-memory)
 
 ## Payment System
 
@@ -26,12 +34,23 @@ The application uses the following environment variables:
 ```
 SECRET_KEY=2e739f24f823e472c1899f068c1af7c06bc79a91
 PORT=8080
+MONGO_URL=mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@mongodb.railway.internal:27017/lipia
+MONGO_PUBLIC_URL=mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@metro.proxy.rlwy.net:52335
+MONGO_INITDB_ROOT_USERNAME=mongo
+MONGO_INITDB_ROOT_PASSWORD=tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg
 HUMANIZER_API_URL=https://web-production-3db6c.up.railway.app
 ADMIN_API_URL=https://railway-test-api-production.up.railway.app
 LIPIA_API_URL=https://lipia-api.kreativelabske.com/api
 LIPIA_API_KEY=7c8a3202ae14857e71e3a9db78cf62139772cae6
-PAYMENT_URL=https://lipia-online.vercel.app/link/andikartill
 ```
+
+## MongoDB Collections
+
+The application uses the following MongoDB collections:
+
+- **users**: User information and subscription details
+- **payments**: Payment records and transaction history
+- **transactions**: Detailed transaction processing data
 
 ## Installation
 
@@ -52,7 +71,9 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. Run the application:
+4. Set up environment variables (or create .env file)
+
+5. Run the application:
 ```bash
 python app.py
 ```
@@ -76,17 +97,10 @@ The application provides the following API endpoints:
 - `POST /payment/callback`: Handle payment callback from payment provider
 - `GET /payment/check/<checkout_id>`: Check payment status
 
-## Architecture
+## Diagnostics
 
-The application consists of the following components:
-
-1. **app.py**: Main application file with routes and Flask setup
-2. **models.py**: Data storage and access functions
-3. **auth.py**: Authentication routes and user management
-4. **payment.py**: Payment processing and subscription management
-5. **utils.py**: Utility functions for text processing and API integration
-6. **templates.py**: HTML templates for the web interface
-7. **config.py**: Application configuration and pricing plans
+- `/health`: Simple health check endpoint
+- `/api-test`: Diagnostic endpoint for API connections
 
 ## Subscription Plans
 
@@ -107,11 +121,20 @@ This account has the Basic plan with 1,375 remaining words.
 
 ## Troubleshooting
 
-If you encounter any issues:
+### MongoDB Issues
 
-1. **Application not starting**: Check the logs for error messages
-2. **Payment not processing**: Try the manual verification option
-3. **Word count not updating**: Restart the application
+If MongoDB connection fails:
+1. Application will automatically fall back to in-memory storage
+2. A background thread will attempt to reconnect to MongoDB
+3. When the connection is established, in-memory data will be synced to MongoDB
+4. The dashboard will display the current storage type (MongoDB or In-memory)
+
+### Payment Issues
+
+If payment processing fails:
+1. The application will automatically fall back to manual payment processing
+2. Payments will be marked as completed and words will be added to the user's account
+3. Real API integration will be attempted first before falling back to manual processing
 
 ## Contributing
 
