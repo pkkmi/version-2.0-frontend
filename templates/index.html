@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Home - Andikar AI{% endblock %}
+{% block content %}
+<div class="container">
+    <div class="jumbotron text-center my-5 py-5">
+        <h1 class="display-4">Welcome to Andikar AI</h1>
+        <p class="lead">Humanize your AI-generated text with our advanced processing technology</p>
+        <hr class="my-4">
+        <p>Transform robotic-sounding AI content into natural, human-like writing with our simple tools.</p>
+        <div class="mt-4">
+            <a class="btn btn-primary btn-lg" href="{{ url_for('register') }}" role="button">Get Started</a>
+            <a class="btn btn-outline-secondary btn-lg ms-2" href="{{ url_for('faq') }}" role="button">Learn More</a>
+        </div>
+    </div>
+
+    <div class="row mb-5">
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-body text-center">
+                    <i class="fas fa-sync fa-4x mb-3 text-primary"></i>
+                    <h3 class="card-title">Humanize Text</h3>
+                    <p class="card-text">Convert AI-generated text into natural-sounding human writing that passes AI detection tools.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-body text-center">
+                    <i class="fas fa-search fa-4x mb-3 text-primary"></i>
+                    <h3 class="card-title">Detect AI Content</h3>
+                    <p class="card-text">Check if text was written by AI or a human with our accurate detection tool.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-body text-center">
+                    <i class="fas fa-code fa-4x mb-3 text-primary"></i>
+                    <h3 class="card-title">API Integration</h3>
+                    <p class="card-text">Integrate our tools directly into your workflow with our developer-friendly API.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row my-5">
+        <div class="col-md-6">
+            <h2>Why Choose Andikar AI?</h2>
+            <ul class="list-group list-group-flush">
+                <li class="list-group-item"><i class="fas fa-check text-success me-2"></i> Natural language processing for human-like text</li>
+                <li class="list-group-item"><i class="fas fa-check text-success me-2"></i> Passes AI detection tools</li>
+                <li class="list-group-item"><i class="fas fa-check text-success me-2"></i> Simple, easy-to-use interface</li>
+                <li class="list-group-item"><i class="fas fa-check text-success me-2"></i> Flexible subscription options</li>
+                <li class="list-group-item"><i class="fas fa-check text-success me-2"></i> Developer-friendly API</li>
+            </ul>
+        </div>
+        <div class="col-md-6">
+            <h2>Get Started Today</h2>
+            <p>Create your account to start humanizing your AI-generated content:</p>
+            <ol>
+                <li>Register for an account</li>
+                <li>Choose your subscription plan</li>
+                <li>Start humanizing your content</li>
+            </ol>
+            <p>Try our Free plan to test the service, then upgrade to unlock more features.</p>
+            <a href="{{ url_for('register') }}" class="btn btn-primary">Create an Account</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
