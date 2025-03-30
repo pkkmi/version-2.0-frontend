@@ -1,25 +1,34 @@
-# Andikar AI Frontend
+# Andikar AI Frontend with MongoDB Integration
 
-A Flask frontend application for humanizing AI-generated text using the Andikar AI ecosystem.
+A Flask frontend application for humanizing AI-generated text using the Andikar AI ecosystem, now with MongoDB database integration.
+
+## New Features in This Version
+
+- **MongoDB Integration**: User data, transactions, and payment history are now stored in MongoDB
+- **Persistent Storage**: Data persists across application restarts and deployments
+- **Enhanced API**: Integration with the Lipia backend service for payment processing
+- **Improved Deployment**: Better Railway deployment support with Procfile
 
 ## Setup Instructions
 
 ### Prerequisites
 - Python 3.8 or higher
+- MongoDB database (can use Railway's MongoDB service)
 - [Andikar Humanizer API](https://github.com/granitevolition/text-humanizer-api) running at https://web-production-3db6c.up.railway.app/ or another endpoint
+- [Lipia MongoDB Backend](https://github.com/granitevolition/lipia-mongodb-backend) - The backend service for payment processing
 
 ### Installation
 
 1. Clone the repository:
    ```
-   git clone https://github.com/granitevolition/andikar-frontend.git
-   cd andikar-frontend
+   git clone https://github.com/pkkmi/version-2.0-frontend.git
+   cd version-2.0-frontend
    ```
 
 2. Create a virtual environment:
    ```
    python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   source venv/bin/activate  # On Windows: venv\\Scripts\\activate
    ```
 
 3. Install dependencies:
@@ -32,7 +41,10 @@ A Flask frontend application for humanizing AI-generated text using the Andikar 
    cp .env.example .env
    ```
    Edit `.env` file to set the appropriate values, especially:
+   - `MONGO_URL` - MongoDB connection URL
+   - `MONGOUSER`, `MONGOPASSWORD`, `MONGOHOST`, `MONGOPORT` - MongoDB connection details
    - `HUMANIZER_API_URL` - URL to your running Humanizer API service
+   - `LIPIA_API_URL` - URL to your running Lipia backend service
 
 ## Running the Application
 
@@ -43,50 +55,86 @@ python app.py
 
 The application will be available at http://localhost:5000/
 
-### Testing the Humanizer API Connection
+### Setting up the Lipia Backend
 
-If you're having problems with the Humanizer API connection, use the diagnostic tool:
+For full functionality, you should also set up the Lipia MongoDB Backend service:
+
+1. Clone the backend repository:
+   ```
+   git clone https://github.com/granitevolition/lipia-mongodb-backend.git
+   cd lipia-mongodb-backend
+   ```
+
+2. Install dependencies and set up the backend as per its README instructions
+
+3. Make sure both applications are using the same MongoDB database
+
+## MongoDB Schema
+
+The application uses these MongoDB collections:
+
+- **users**: Stores user accounts, including username, pin, word balance
+- **payments**: Records payment transactions
+- **transactions**: Tracks payment processing status
+
+## Railway Deployment
+
+This application is optimized for Railway deployment:
+
+1. Create a new Railway project
+2. Connect your GitHub repository to Railway
+3. Add the MongoDB plugin to your project
+4. Configure environment variables in Railway:
+   - Set `MONGO_URL` to the value from Railway MongoDB plugin
+   - Add all other environment variables from `.env.example`
+   - Set `LIPIA_API_URL` to point to your deployed Lipia backend
+
+### Testing the API Connections
+
+The application includes a diagnostic tool:
 
 ```
-python test_api.py
+http://your-app-url/api-test
 ```
 
-This script will test the connection to the Humanizer API and provide detailed information about any issues.
+This will test the connections to both the Humanizer API and the Lipia Backend API.
 
 ## Troubleshooting
 
-### Humanizer API Connection Issues
+### MongoDB Connection Issues
 
-If the humanizing functionality is not working:
+- Verify the MongoDB connection string and credentials
+- Check if MongoDB service is running
+- Ensure network connectivity to MongoDB server
 
-1. Check that the Humanizer API is running at the URL specified in your `.env` file
-2. Run `python test_api.py` to diagnose connection issues
-3. Verify that the endpoint is correct (should be `/humanize_text`)
-4. Check for any network/firewall issues that might block the connection
-5. Inspect the logs for detailed error information
+### API Connection Issues
 
-The application includes a fallback humanization function if the API is temporarily unavailable.
+- Verify that the Humanizer API and Lipia Backend API are running
+- Check the URLs in your `.env` file
+- Run the API test to diagnose connection issues
+- Check for network/firewall issues that might block the connections
 
 ## Features
 
-- User authentication and registration
+- User authentication and registration with MongoDB storage
 - Text humanization using external API
 - AI content detection
-- User dashboard with usage statistics
+- User dashboard with usage statistics and MongoDB-backed history
 - Tiered pricing plans with word limits
-- M-Pesa payment integration (simulated)
+- Payment processing with MongoDB transaction tracking
+- Word credit management
 - API key management for integration
 
 ## Project Structure
 
 - `app.py` - Main Flask application
 - `utils.py` - Utility functions including API integration
-- `models.py` - Data models and in-memory databases
+- `models.py` - Data models with MongoDB integration
 - `templates/` - HTML templates (embedded in templates.py)
 - `static/` - CSS and JavaScript files
 - `config.py` - Application configuration
-- `test_api.py` - Diagnostic tool for API connection
+- `Procfile` - Railway deployment configuration
 
-## Deployment
+## Credits
 
-The application is designed to be deployed on Railway.app or similar platform. See the Railway documentation for deployment instructions.
+This project is an enhanced version of the Andikar AI Frontend, integrating with MongoDB storage via the Lipia backend service.
