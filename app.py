@@ -7,7 +7,6 @@ import os
 import requests
 from functools import wraps
 import logging
-import time
 
 from config import APP_NAME, pricing_plans
 from models import users_db, transactions_db, init_mongo, get_user, update_word_count, get_user_payments, mongo_connected
@@ -24,30 +23,24 @@ logging.basicConfig(level=logging.INFO)
 logger = app.logger
 logger.info("Starting application...")
 
-# MongoDB configuration - use the public URL explicitly
-mongo_url = os.environ.get('MONGO_PUBLIC_URL', '')
-if not mongo_url:
-    # Try to construct URL from parts if public URL not provided
-    mongo_user = os.environ.get('MONGOUSER', 'mongo')
-    mongo_pass = os.environ.get('MONGOPASSWORD', 'tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg')
-    mongo_host = os.environ.get('MONGO_HOST', 'metro.proxy.rlwy.net')
-    mongo_port = os.environ.get('MONGO_PORT', '52335')
-    mongo_url = f"mongodb://{mongo_user}:{mongo_pass}@{mongo_host}:{mongo_port}/lipia"
-
-app.config['MONGO_URI'] = mongo_url
-# Mask password for logging
-masked_url = app.config['MONGO_URI'].replace(
-    os.environ.get('MONGOPASSWORD', 'tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg'), 
-    '****'
+# MongoDB configuration - use the public URL
+mongo_uri = os.environ.get(
+    'MONGO_PUBLIC_URL', 
+    'mongodb://mongo:tCvrFvMjzkRSNRDlWMLuDexKqVNMpgDg@metro.proxy.rlwy.net:52335/lipia'
 )
-logger.info(f"MongoDB URI: {masked_url}")
 
-# Attempt different database names if authentication fails
-app.config['MONGO_DBNAME'] = os.environ.get('MONGO_DBNAME', 'lipia')
+# Make sure the DB name is included
+if '/lipia' not in mongo_uri and not mongo_uri.endswith('/lipia'):
+    if '?' in mongo_uri:
+        mongo_uri = mongo_uri.replace('?', '/lipia?')
+    else:
+        mongo_uri = mongo_uri + '/lipia'
+
+app.config['MONGO_URI'] = mongo_uri
+logger.info(f"MongoDB URI: {mongo_uri}")
 
 # Initialize MongoDB with fallback to in-memory if connection fails
 try:
-    # Add a short timeout for MongoDB initialization
     mongo = init_mongo(app)
     logger.info(f"MongoDB connected: {mongo_connected}")
 except Exception as e:
@@ -444,7 +437,7 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.datetime.now().isoformat(),
         "storage": "MongoDB" if mongo_connected else "In-memory",
-        "mongo_url": masked_url
+        "mongo_url": app.config['MONGO_URI']
     })
 
 
@@ -458,7 +451,7 @@ def api_test():
         "api_url": api_url,
         "tests": [],
         "storage": "MongoDB" if mongo_connected else "In-memory fallback",
-        "mongodb_uri": masked_url,
+        "mongodb_uri": app.config['MONGO_URI'],
         "app_version": "2.1.0 - Hybrid Storage"
     }
     
